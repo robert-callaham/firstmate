@@ -50,7 +50,20 @@ esac
 # a doctored sidecar cannot redirect this poll at another host or project.
 case "$provider" in
   github)
-    [ "$host" = github.com ] || exit 0
+    # github.com or a GitHub Enterprise Server hostname, held to the same DNS
+    # rules the GitLab branch applies below. The exact-reconstruction check
+    # still binds the poll to this one host.
+    #
+    # The operator allowlist in bin/fm-pr-lib.sh gates which hosts can ever be
+    # ARMED; these bytes are identical for every task and carry no home path to
+    # read it from, so this branch revalidates shape only. That is the same
+    # boundary the gitlab branch has always had for self-hosted instances: a
+    # host reaching here already passed the allowlist at arm time, and a host
+    # that did not could only arrive by direct tampering with the state dir.
+    [ "${#host}" -ge 1 ] && [ "${#host}" -le 253 ] || exit 0
+    case "$host" in
+      .*|*.|*..*|*[!a-z0-9.-]*) exit 0 ;;
+    esac
     owner=${path%%/*}
     repo=${path#*/}
     [ "${#owner}" -ge 1 ] && [ "${#owner}" -le 39 ] || exit 0
@@ -61,7 +74,9 @@ case "$provider" in
     case "$repo" in
       .|..|*[!A-Za-z0-9._-]*) exit 0 ;;
     esac
-    [ "$url" = "https://github.com/$owner/$repo/pull/$number" ] || exit 0
+    [ "$url" = "https://$host/$owner/$repo/pull/$number" ] || exit 0
+    # gh resolves the instance from the full PR URL, so the host comes from the
+    # validated record rather than gh's configured default.
     state=$(gh pr view "$url" --json state -q .state 2>/dev/null) || exit 0
     [ "$state" = MERGED ] && printf '%s\n' merged
     ;;

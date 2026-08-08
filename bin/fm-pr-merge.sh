@@ -2,11 +2,15 @@
 # Merge a task's PR after recording pr= and any available pr_head= through
 # bin/fm-pr-check.sh, so teardown can verify landed work after squash merges.
 # The full canonical GitHub PR URL is parsed by bin/fm-pr-lib.sh and the derived
-# owner/repository and PR number are passed to gh-axi as separate arguments.
+# host, owner/repository and PR number are passed to gh-axi as separate
+# arguments. The host is passed explicitly because gh-axi otherwise defaults to
+# github.com, which would send a GitHub Enterprise Server merge to the wrong
+# forge.
 #
 # Merge method defaults to --squash when the caller passes none of --squash,
 # --merge, --rebase, or --method after the optional -- separator. Extra args
-# must not include --repo or -R because the repository comes only from the URL.
+# must not include --repo, -R, or --hostname because the repository and host
+# come only from the URL.
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [-- <extra gh-axi pr merge args>]
 set -eu
 
@@ -33,6 +37,7 @@ if ! fm_pr_task_id_valid "$ID" || ! fm_pr_url_parse "$RAW_URL" \
   exit 2
 fi
 URL=$FM_PR_URL
+PR_HOST=$FM_PR_HOST
 PR_OWNER=$FM_PR_OWNER
 PR_REPO=$FM_PR_REPO
 PR_NUMBER=$FM_PR_NUMBER
@@ -55,6 +60,10 @@ reject_repo_overrides() {
     case "$arg" in
       --repo|--repo=*|-R|-R?*)
         echo "error: extra merge arguments must not override the repository" >&2
+        return 1
+        ;;
+      --hostname|--hostname=*)
+        echo "error: extra merge arguments must not override the host" >&2
         return 1
         ;;
     esac
@@ -81,4 +90,4 @@ if ! caller_has_merge_method "$@"; then
   merge_args=(--squash)
 fi
 
-gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
+gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" --hostname "$PR_HOST" "${merge_args[@]+"${merge_args[@]}"}" "$@"

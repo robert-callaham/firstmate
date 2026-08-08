@@ -109,19 +109,15 @@ fm_task_id_creation_valid() {
   [ "${#id}" -le 64 ]
 }
 
-# GitLab serves self-hosted instances, so the host is part of the identity
-# rather than a constant. It is accepted only as a lowercase DNS name with no
-# userinfo, port, or trailing dot, which keeps one canonical spelling per MR.
-# github.com is refused here even though its shape is otherwise valid: it is
-# GitHub's own host and never a GitLab instance, so a URL like
-# https://github.com/o/r/-/merge_requests/1 (a typo'd or spoofed GitHub URL)
-# would otherwise be armed as a GitLab watch that can never succeed.
-fm_pr_gitlab_host_valid() {
+# Both providers serve self-hosted instances, so the host is part of the
+# identity rather than a constant. It is accepted only as a lowercase DNS name
+# with no userinfo, port, or trailing dot, which keeps one canonical spelling
+# per PR or MR.
+fm_pr_dns_host_valid() {
   local host=${1-} label
   local LC_ALL=C
   local -a labels
   [ "${#host}" -ge 1 ] && [ "${#host}" -le 253 ] || return 1
-  [ "$host" != github.com ] || return 1
   case "$host" in
     .*|*.|*..*|*[!a-z0-9.-]*) return 1 ;;
   esac
@@ -132,6 +128,59 @@ fm_pr_gitlab_host_valid() {
       -*|*-) return 1 ;;
     esac
   done
+}
+
+# A GitHub host is github.com or a GitHub Enterprise Server instance, which
+# serves the identical /owner/repository/pull/N shape on its own hostname.
+# Pinning this to github.com refused every GHE PR outright, which silently
+# disabled merge monitoring for any fleet whose repos are enterprise-hosted.
+#
+# The replacement is an operator allowlist, NOT any DNS-valid host. The old
+# github.com pin was doing double duty: it also refused lookalike hosts such as
+# github.com.evil, evilgithub.com, and punycode homographs, any of which would
+# otherwise arm a watch or aim a merge at an attacker's forge. An allowlist
+# keeps that refusal while letting a real GHE instance through.
+#
+# Declared one lowercase DNS name per line in $FM_HOME/config/github-hosts;
+# blank lines and # comments are ignored. github.com is always allowed, so an
+# absent file preserves the previous behavior exactly.
+fm_pr_github_hosts_file() {
+  if [ -n "${FM_GITHUB_HOSTS_FILE-}" ]; then
+    printf '%s\n' "$FM_GITHUB_HOSTS_FILE"
+  elif [ -n "${FM_HOME-}" ]; then
+    printf '%s\n' "$FM_HOME/config/github-hosts"
+  fi
+}
+
+fm_pr_github_host_allowed() {
+  local host=${1-} file line
+  local LC_ALL=C
+  [ "$host" != github.com ] || return 0
+  file=$(fm_pr_github_hosts_file)
+  [ -n "$file" ] && [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}
+    line=${line//[[:space:]]/}
+    [ -n "$line" ] || continue
+    [ "$line" != "$host" ] || return 0
+  done < "$file"
+  return 1
+}
+
+fm_pr_github_host_valid() {
+  local host=${1-}
+  fm_pr_dns_host_valid "$host" || return 1
+  fm_pr_github_host_allowed "$host"
+}
+
+# github.com is refused for GitLab even though its shape is otherwise valid: it
+# is GitHub's own host and never a GitLab instance, so a URL like
+# https://github.com/o/r/-/merge_requests/1 (a typo'd or spoofed GitHub URL)
+# would otherwise be armed as a GitLab watch that can never succeed.
+fm_pr_gitlab_host_valid() {
+  local host=${1-}
+  [ "$host" != github.com ] || return 1
+  fm_pr_dns_host_valid "$host"
 }
 
 # A GitLab project path is group[/subgroup...]/project, so at least two
@@ -161,6 +210,12 @@ fm_pr_gitlab_path_valid() {
 # unchanged, and GitLab gets its own host and namespace rules rather than a
 # loosened GitHub rule.
 #
+# The GitHub host is parsed rather than assumed, because GitHub Enterprise
+# Server serves the same /owner/repository/pull/N shape on a private hostname.
+# The two providers stay separable by URL shape, not by host: only GitHub uses
+# /pull/N and only GitLab uses /-/merge_requests/N, so a GHE host cannot be
+# mistaken for a GitLab instance or the reverse.
+#
 # FM_PR_OWNER and FM_PR_REPO are additionally set for github because
 # bin/fm-pr-merge.sh addresses GitHub by owner/repository. A gitlab URL leaves
 # them empty; teaching the merge path about GitLab is a separate change, and
@@ -175,20 +230,22 @@ fm_pr_url_parse() {
   FM_PR_OWNER=
   FM_PR_REPO=
   FM_PR_NUMBER=
-  pattern='^https://github\.com/([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,37}[A-Za-z0-9])/([A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]*)$'
+  pattern='^https://([a-z0-9.-]{1,253})/([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,37}[A-Za-z0-9])/([A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]*)$'
   if [[ "$raw" =~ $pattern ]]; then
-    [[ "${BASH_REMATCH[1]}" != *--* ]] || return 1
-    [ "${BASH_REMATCH[2]}" != . ] && [ "${BASH_REMATCH[2]}" != .. ] || return 1
+    host=${BASH_REMATCH[1]}
+    fm_pr_github_host_valid "$host" || return 1
+    [[ "${BASH_REMATCH[2]}" != *--* ]] || return 1
+    [ "${BASH_REMATCH[3]}" != . ] && [ "${BASH_REMATCH[3]}" != .. ] || return 1
     FM_PR_PROVIDER=github
     FM_PR_URL=$raw
-    FM_PR_HOST=github.com
-    FM_PR_PATH="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    FM_PR_HOST=$host
+    FM_PR_PATH="${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
     # Consumed by bin/fm-pr-merge.sh, which addresses GitHub by owner/repository.
     # shellcheck disable=SC2034
-    FM_PR_OWNER=${BASH_REMATCH[1]}
+    FM_PR_OWNER=${BASH_REMATCH[2]}
     # shellcheck disable=SC2034
-    FM_PR_REPO=${BASH_REMATCH[2]}
-    FM_PR_NUMBER=${BASH_REMATCH[3]}
+    FM_PR_REPO=${BASH_REMATCH[3]}
+    FM_PR_NUMBER=${BASH_REMATCH[4]}
     return 0
   fi
   # The path class contains "/" and "-", so this match is greedy to the last
