@@ -212,7 +212,10 @@ When a selected delivery path calls for a diff, `bin/fm-review-diff.sh` refreshe
 For target project repos shipped through their own no-mistakes pipeline, commits under `.no-mistakes/evidence/` are the pipeline's PR-viewable validation evidence and are expected to stay in the crew branch until the evidence-hosting design changes.
 The firstmate repo itself is the exception: its `.no-mistakes/` directory is local state, stays gitignored, and is rejected by CI if tracked.
 PR-based task merges go through `bin/fm-pr-merge.sh`, which records `pr=` and any available `pr_head=` through `bin/fm-pr-check.sh` before calling `gh-axi pr merge`.
-The helper requires a full `https://github.com/<owner>/<repo>/pull/<n>` URL, invokes `gh-axi pr merge <n> --repo <owner>/<repo>`, defaults to `--squash`, preserves explicit merge-method flags, and rejects malformed URLs or repo override flags before recording merge state; a well-formed GitLab merge request URL (see [docs/gitlab-merge-watch.md](gitlab-merge-watch.md)) is refused too, explicitly, rather than sent to the wrong forge.
+The helper requires a full `https://<host>/<owner>/<repo>/pull/<n>` URL, invokes `gh-axi pr merge <n> --repo <owner>/<repo> --hostname <host>`, defaults to `--squash`, preserves explicit merge-method flags, and rejects malformed URLs or repo/host override flags before recording merge state; a well-formed GitLab merge request URL (see [docs/gitlab-merge-watch.md](gitlab-merge-watch.md)) is refused too, explicitly, rather than sent to the wrong forge.
+`<host>` is `github.com` or a GitHub Enterprise Server hostname declared in `config/github-hosts` (one lowercase DNS name per line, `#` comments ignored).
+That allowlist is a security boundary, not a convenience: it is what replaced the old hardcoded `github.com` and it is the only thing refusing lookalike hosts such as `github.com.evil`, `evilgithub.com`, or a punycode homograph, any of which is a valid DNS name that would otherwise arm a watch or aim a merge at another forge.
+With no such file, behavior is identical to the `github.com`-only pin.
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, PR-discovery fallback, and stale-lock recovery procedure.
 

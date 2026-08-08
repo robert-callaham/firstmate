@@ -14,6 +14,9 @@
 #   (f) malformed PR URL fails fast without calling gh-axi
 #   (g) explicit merge method is not overridden by the default --squash
 #   (h) repo override args fail fast because the repo comes from the URL
+#   (i) an allowlisted GHE host merges against that host, not github.com
+#   (j) undeclared and lookalike hosts refuse before any side effect
+#   (k) host override args fail fast because the host comes from the URL
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -89,6 +92,7 @@ run_pr_merge() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
+  FM_GITHUB_HOSTS_FILE="${FM_TEST_HOSTS_FILE-}" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -117,7 +121,7 @@ test_records_pr_and_head_before_merging() {
     "records-before-merge: pr= was not recorded"
   assert_grep 'pr_head=deadbeefcafefeed0000000000000000deadbeef' "$case_dir/state/task-x1.meta" \
     "records-before-merge: pr_head= was not recorded"
-  grep -qxF 'pr merge 9 --repo example/repo --squash' "$case_dir/gh-axi.log" \
+  grep -qxF 'pr merge 9 --repo example/repo --hostname github.com --squash' "$case_dir/gh-axi.log" \
     || fail "records-before-merge: gh-axi pr merge was not invoked with number, --repo, and default --squash"
   pass "fm-pr-merge records pr= and pr_head= before invoking gh-axi pr merge"
 }
@@ -151,7 +155,7 @@ test_extra_merge_args_forwarded() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/15 -- --squash --delete-branch \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "extra-args: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 15 --repo example/repo --squash --delete-branch' "$case_dir/gh-axi.log" \
+  grep -qxF 'pr merge 15 --repo example/repo --hostname github.com --squash --delete-branch' "$case_dir/gh-axi.log" \
     || fail "extra-args: extra gh-axi pr merge flags were not forwarded"
   pass "fm-pr-merge forwards extra flags to gh-axi pr merge after the -- separator"
 }
@@ -266,7 +270,7 @@ test_explicit_merge_method_not_overridden() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/22 -- --merge \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "explicit-merge-method: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 22 --repo example/repo --merge' "$case_dir/gh-axi.log" \
+  grep -qxF 'pr merge 22 --repo example/repo --hostname github.com --merge' "$case_dir/gh-axi.log" \
     || fail "explicit-merge-method: caller --merge was not forwarded without an extra default --squash"
   pass "fm-pr-merge does not add default --squash when the caller passes an explicit merge method"
 }
@@ -281,7 +285,7 @@ test_method_equals_merge_method_not_overridden() {
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/23 -- --method=merge \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "method-equals-merge-method: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 23 --repo example/repo --method=merge' "$case_dir/gh-axi.log" \
+  grep -qxF 'pr merge 23 --repo example/repo --hostname github.com --method=merge' "$case_dir/gh-axi.log" \
     || fail "method-equals-merge-method: caller --method=merge was not forwarded without an extra default --squash"
   pass "fm-pr-merge respects --method=<value> as an explicit merge method"
 }
@@ -296,9 +300,76 @@ test_parses_pr_url_for_gh_axi() {
   run_pr_merge "$case_dir" task-x1 https://github.com/my-org/my-repo/pull/126 \
     > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "url-parsing: fm-pr-merge failed"
 
-  grep -qxF 'pr merge 126 --repo my-org/my-repo --squash' "$case_dir/gh-axi.log" \
+  grep -qxF 'pr merge 126 --repo my-org/my-repo --hostname github.com --squash' "$case_dir/gh-axi.log" \
     || fail "url-parsing: gh-axi pr merge was not invoked as number + --repo + default --squash"
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
+}
+
+# GitHub Enterprise Server serves the same /owner/repo/pull/N shape on a
+# private hostname. The host must reach gh-axi explicitly, or the merge is sent
+# to github.com and silently addresses the wrong forge.
+test_ghe_host_merges_against_its_own_host() {
+  local case_dir
+  case_dir=$(make_case ghe-allowlisted)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 7777777777777777777777777777777777777777
+  : > "$case_dir/gh-axi.log"
+  printf '# operator-declared\nghe.example.com\n' > "$case_dir/github-hosts"
+
+  FM_TEST_HOSTS_FILE="$case_dir/github-hosts" \
+    run_pr_merge "$case_dir" task-x1 https://ghe.example.com/my-org/my-repo/pull/8 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "ghe-allowlisted: fm-pr-merge failed"
+
+  grep -qxF 'pr merge 8 --repo my-org/my-repo --hostname ghe.example.com --squash' "$case_dir/gh-axi.log" \
+    || fail "ghe-allowlisted: gh-axi pr merge did not carry the enterprise host"
+  pass "fm-pr-merge sends an allowlisted GHE PR to its own host"
+}
+
+# The allowlist is what replaced the old github.com pin, so an undeclared host
+# must still be refused before any side effect - including a lookalike that is
+# a perfectly valid DNS name.
+test_unlisted_and_lookalike_hosts_refuse_before_merge() {
+  local case_dir rc url
+  case_dir=$(make_case ghe-unlisted)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 8888888888888888888888888888888888888888
+  printf 'ghe.example.com\n' > "$case_dir/github-hosts"
+
+  for url in https://other.example.com/o/r/pull/1 \
+             https://github.com.evil/o/r/pull/1 \
+             https://evilgithub.com/o/r/pull/1; do
+    : > "$case_dir/gh-axi.log"
+    set +e
+    FM_TEST_HOSTS_FILE="$case_dir/github-hosts" \
+      run_pr_merge "$case_dir" task-x1 "$url" \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 2 "$rc" "ghe-unlisted: $url should be refused"
+    [ ! -s "$case_dir/gh-axi.log" ] || fail "ghe-unlisted: gh-axi ran for $url"
+    ! grep -q '^pr=' "$case_dir/state/task-x1.meta" \
+      || fail "ghe-unlisted: pr= was recorded for $url"
+  done
+  pass "fm-pr-merge refuses undeclared and lookalike hosts before any side effect"
+}
+
+# The host comes only from the URL, exactly as the repository does.
+test_hostname_override_args_refuse_before_recording() {
+  local case_dir rc
+  case_dir=$(make_case hostname-override)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 9999999999999999999999999999999999999999
+  : > "$case_dir/gh-axi.log"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/right/repo/pull/5 -- --hostname evil.example.com \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "hostname-override: fm-pr-merge should refuse a host override"
+  [ ! -s "$case_dir/gh-axi.log" ] || fail "hostname-override: gh-axi ran despite the refusal"
+  pass "fm-pr-merge refuses extra args that override the host"
 }
 
 test_records_pr_and_head_before_merging
@@ -311,3 +382,6 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+test_ghe_host_merges_against_its_own_host
+test_unlisted_and_lookalike_hosts_refuse_before_merge
+test_hostname_override_args_refuse_before_recording
