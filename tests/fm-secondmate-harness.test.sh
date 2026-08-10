@@ -397,7 +397,7 @@ test_propagate_lib() {
 # A policy-service rule is only usable in a home that also has the skill it
 # names, so the named skill travels with the dispatch file it belongs to.
 test_propagate_policy_skills() {
-  local d primary second report stderr m1 m2
+  local d primary second report stderr m1 m2 leftover
 
   d="$TMP_ROOT/policy-skills"
   primary="$d/primary"
@@ -443,6 +443,20 @@ test_propagate_policy_skills() {
     || fail "changed policy skill did not converge downstream"
   [ ! -e "$second/.agents/skills/governor-admission/stale.md" ] \
     || fail "a stale destination file survived policy skill convergence"
+
+  # Staging never litters the directory a harness scans for skills, and a tree
+  # a killed run left behind is swept by the next convergence.
+  for leftover in "$second/.agents/skills"/.fm-inherit-skill*; do
+    [ -e "$leftover" ] && fail "skill staging was left inside the scanned skills root: $leftover"
+  done
+  mkdir -p "$second/.agents/.fm-inherit-skill.interrupted/governor-admission"
+  printf 'partial\n' > "$second/.agents/.fm-inherit-skill.interrupted/SKILL.md"
+  printf '# governor-admission v3\n' > "$primary/.agents/skills/governor-admission/SKILL.md"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  [ ! -e "$second/.agents/.fm-inherit-skill.interrupted" ] \
+    || fail "an interrupted run's staging tree survived the next convergence"
+  [ "$(cat "$second/.agents/skills/governor-admission/SKILL.md")" = '# governor-admission v3' ] \
+    || fail "sweeping stale staging broke the convergence that follows it"
 
   # A named policy the primary itself does not have is a visible skip, never a
   # silent miss - the receiving home's bootstrap owns the actionable report.

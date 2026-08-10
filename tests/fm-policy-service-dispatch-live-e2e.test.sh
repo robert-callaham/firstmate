@@ -17,6 +17,7 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACT="$ROOT/AGENTS.md"
 QUOTA_OWNER="$ROOT/.agents/skills/quota-array-dispatch/SKILL.md"
+HARNESS_OWNER="$ROOT/.agents/skills/harness-adapters/SKILL.md"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -27,6 +28,7 @@ command -v pi >/dev/null 2>&1 || fail "pi not found"
 command -v jq >/dev/null 2>&1 || fail "jq not found"
 [ -f "$CONTRACT" ] || fail "AGENTS.md contract not found"
 [ -f "$QUOTA_OWNER" ] || fail "quota-array-dispatch skill not found"
+[ -f "$HARNESS_OWNER" ] || fail "harness-adapters skill not found"
 
 LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-policy-service-dispatch-live.XXXXXX")
 HOME_DIR="$LAB/home"
@@ -42,15 +44,27 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p \
+  "$HOME_DIR/bin" \
   "$HOME_DIR/config" \
   "$HOME_DIR/.agents/skills/quota-array-dispatch" \
+  "$HOME_DIR/.agents/skills/harness-adapters" \
   "$HOME_DIR/.agents/skills/governor-admission" \
   "$FAKEBIN"
 
 # The instruction under test is the repository's own always-loaded contract, not
-# a test-authored paraphrase of it.
+# a test-authored paraphrase of it. Because the whole contract loads, the lab
+# also has to provide the surfaces it mandates before any dispatch work: the
+# session-start command and the always-loaded harness owner. Without them the
+# turn stalls on a missing mandatory step for reasons unrelated to the selector.
 cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
 cp "$QUOTA_OWNER" "$HOME_DIR/.agents/skills/quota-array-dispatch/SKILL.md"
+cp "$HARNESS_OWNER" "$HOME_DIR/.agents/skills/harness-adapters/SKILL.md"
+
+cat > "$HOME_DIR/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$HOME_DIR/bin/fm-session-start.sh"
 
 # A static crewmate harness that a silent fallback would reach for. No case may
 # ever resolve to it.
@@ -90,9 +104,17 @@ cat > "$SNAPSHOT" <<'JSON'
 {"schemaVersion":3,"providers":[{"provider":"claude","quotaSemantics":{"description":"The all_models scope bounds every Claude model.","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":9,"boundedBy":["weekly"],"runway":{"status":"projected_exhaustion","usableRunwaySeconds":600,"projectedExhaustedAt":"2030-01-01T00:10:00Z","limitingWindowId":"weekly","projectionConfidence":"established","projectionBasis":"cycle_average"}}]}},{"provider":"codex","quotaSemantics":{"description":"The all_models scope bounds every Codex model.","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":72,"boundedBy":["weekly"],"runway":{"status":"projected_exhaustion","usableRunwaySeconds":28800,"projectedExhaustedAt":"2030-01-01T08:00:00Z","limitingWindowId":"weekly","projectionConfidence":"established","projectionBasis":"cycle_average"}}]}}]}
 JSON
 
+# Only snapshot acquisitions land in the ledger the "exactly once" assertions
+# read. `quota-axi auth --json` is a separate credential-source read the loaded
+# contract points at, so it is answered rather than refused, and it can neither
+# derail the turn nor be mistaken for a second snapshot.
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
 set -u
+if [ "${1:-}" = auth ] && [ "${2:-}" = --json ] && [ "$#" -eq 2 ]; then
+  printf '%s\n' '[{"provider":"claude","sources":[{"source":"keychain","status":"available"}]},{"provider":"codex","sources":[{"source":"auth-json","status":"available"}]},{"provider":"grok","sources":[{"source":"auth-json","status":"available"}]}]'
+  exit 0
+fi
 printf '%s\n' "$*" >> "${QUOTA_AXI_CALLS:?}"
 if [ "${1:-}" != --json ] || [ "$#" -ne 1 ]; then
   printf 'unexpected quota-axi invocation: %s\n' "$*" >&2

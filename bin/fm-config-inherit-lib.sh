@@ -237,39 +237,57 @@ inheritable_skill_tree_safe() {
   return 0
 }
 
-# Replace <dest-dir> with a copy of <src-dir> through a staged sibling, so a
-# reader of the destination never sees a half-written skill and a failed copy
-# leaves the previous tree in place.
+# Half-written and just-replaced skill trees must never sit inside the
+# directory a harness scans for skills, so both stage in the skills root's
+# PARENT - same filesystem, so the swap below is still an atomic rename.
+FM_INHERIT_SKILL_STAGE_PREFIX=".fm-inherit-skill"
+
+fm_inherit_skill_stage_root() {  # <dest-home>
+  local dest_home=$1 root
+  [ -n "$dest_home" ] || return 1
+  root="$dest_home/${FM_INHERITABLE_POLICY_SKILL_ROOT_REL%/*}"
+  [ "$root" != "$dest_home/$FM_INHERITABLE_POLICY_SKILL_ROOT_REL" ] || return 1
+  printf '%s\n' "$root"
+}
+
+# Drop staging trees an interrupted run left behind. Callers hold the home's
+# inheritance lock, so anything matching here is from a dead run, never from a
+# copy in flight.
+fm_inherit_skill_stage_sweep() {  # <stage-root>
+  local stage_root=$1 leftover
+  [ -n "$stage_root" ] && [ -d "$stage_root" ] || return 0
+  for leftover in "$stage_root/$FM_INHERIT_SKILL_STAGE_PREFIX".*; do
+    [ -d "$leftover" ] && [ ! -L "$leftover" ] || continue
+    rm -rf "$leftover" 2>/dev/null || true
+  done
+}
+
+# Replace <dest-dir> with a copy of <src-dir> through a tree staged under
+# <stage-root>, so a reader of the destination never sees a half-written skill
+# and a failed copy leaves the previous tree in place.
 copy_inheritable_skill_dir() {
-  local src=$1 dest=$2 dest_parent stage retired
+  local src=$1 dest=$2 stage_root=$3 dest_parent stage retired rc=1
   dest_parent=${dest%/*}
   [ -n "$dest_parent" ] && [ "$dest_parent" != "$dest" ] || return 1
-  mkdir -p "$dest_parent" 2>/dev/null || return 1
-  stage=$(mktemp -d "$dest_parent/.fm-inherit-skill.XXXXXX" 2>/dev/null) || return 1
-  if ! cp -R "$src/." "$stage/" 2>/dev/null; then
-    rm -rf "$stage" 2>/dev/null || true
-    return 1
+  [ -n "$stage_root" ] || return 1
+  mkdir -p "$dest_parent" "$stage_root" 2>/dev/null || return 1
+  stage=$(mktemp -d "$stage_root/$FM_INHERIT_SKILL_STAGE_PREFIX.XXXXXX" 2>/dev/null) || return 1
+  retired=""
+  if cp -R "$src/." "$stage/" 2>/dev/null; then
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+      mv -f "$stage" "$dest" 2>/dev/null && rc=0
+    elif retired=$(mktemp -d "$stage_root/$FM_INHERIT_SKILL_STAGE_PREFIX.XXXXXX" 2>/dev/null) \
+      && mv -f "$dest" "$retired/current" 2>/dev/null; then
+      if mv -f "$stage" "$dest" 2>/dev/null; then
+        rc=0
+      else
+        mv -f "$retired/current" "$dest" 2>/dev/null || true
+      fi
+    fi
   fi
-  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
-    mv -f "$stage" "$dest" 2>/dev/null && return 0
-    rm -rf "$stage" 2>/dev/null || true
-    return 1
-  fi
-  retired=$(mktemp -d "$dest_parent/.fm-inherit-skill-retired.XXXXXX" 2>/dev/null) || {
-    rm -rf "$stage" 2>/dev/null || true
-    return 1
-  }
-  if ! mv -f "$dest" "$retired/current" 2>/dev/null; then
-    rm -rf "$stage" "$retired" 2>/dev/null || true
-    return 1
-  fi
-  if ! mv -f "$stage" "$dest" 2>/dev/null; then
-    mv -f "$retired/current" "$dest" 2>/dev/null || true
-    rm -rf "$stage" "$retired" 2>/dev/null || true
-    return 1
-  fi
-  rm -rf "$retired" 2>/dev/null || true
-  return 0
+  [ "$rc" = 0 ] || rm -rf "$stage" 2>/dev/null || true
+  [ -z "$retired" ] || rm -rf "$retired" 2>/dev/null || true
+  return "$rc"
 }
 
 # propagate_policy_skills <src-home> <dest-home> <src-config-dir>
@@ -281,8 +299,10 @@ copy_inheritable_skill_dir() {
 # here - the receiving home's own bootstrap owns the actionable diagnostic.
 propagate_policy_skills() {
   local src_home=$1 dest_home=$2 src_config=$3
-  local name item src dest reason rc=0
+  local name item src dest stage_root reason rc=0
   [ -n "$src_home" ] && [ -n "$dest_home" ] && [ -n "$src_config" ] || return 1
+  stage_root=$(fm_inherit_skill_stage_root "$dest_home") || return 1
+  fm_inherit_skill_stage_sweep "$stage_root"
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     item="$FM_INHERITABLE_POLICY_SKILL_ROOT_REL/$name"
@@ -322,7 +342,7 @@ propagate_policy_skills() {
       record_inheritable_config_result "$item" unchanged ""
       continue
     fi
-    if copy_inheritable_skill_dir "$src" "$dest"; then
+    if copy_inheritable_skill_dir "$src" "$dest" "$stage_root"; then
       record_inheritable_config_result "$item" pushed ""
     else
       reason="failed to copy"
