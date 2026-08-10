@@ -3,8 +3,10 @@
 # selector in AGENTS.md section 4.
 #
 # This drives the real AGENTS.md intake contract through the public Pi interface
-# against a fake local policy skill rather than parsing instruction source bytes
-# or recreating the delegation rules in test code.
+# rather than parsing instruction source bytes or recreating the delegation
+# rules in test code: the repository's own AGENTS.md is the lab home's context
+# file, and the fake local policy skill supplies only its own command
+# convention, so deleting the contract's policy-service lines fails these cases.
 set -u
 
 if [ "${FM_POLICY_SERVICE_DISPATCH_LIVE_E2E:-0}" != 1 ]; then
@@ -30,6 +32,7 @@ LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-policy-service-dispatch-live.XXXXXX")
 HOME_DIR="$LAB/home"
 FAKEBIN="$LAB/fakebin"
 VERDICT="$LAB/policy-verdict"
+SNAPSHOT="$LAB/quota-snapshot.json"
 POLICY_CALLS="$LAB/policy-axi.calls"
 QUOTA_CALLS="$LAB/quota-axi.calls"
 
@@ -53,8 +56,10 @@ cp "$QUOTA_OWNER" "$HOME_DIR/.agents/skills/quota-array-dispatch/SKILL.md"
 # ever resolve to it.
 printf '%s\n' claude > "$HOME_DIR/config/crew-harness"
 
-# Test-only stand-in for a captain's local economic policy skill. It owns
-# selection for its intake and answers only from the candidates it is handed.
+# Test-only stand-in for a captain's local economic policy skill. It supplies
+# ONLY this policy's own command convention - the delegation, no-preselection,
+# no-fallback, and snapshot-handoff rules under test must come from the copied
+# AGENTS.md, or these cases prove nothing about that contract.
 cat > "$HOME_DIR/.agents/skills/governor-admission/SKILL.md" <<'MD'
 ---
 name: governor-admission
@@ -64,25 +69,26 @@ user-invocable: false
 
 # governor-admission
 
-This skill is the single owner of profile selection for the intake that names it.
-Run `policy-axi --candidates <json>` exactly once, passing the complete candidate
-array you were handed as one compact JSON array, in the order you received it.
-Never drop, reorder, or preselect a candidate before that call.
+Answer with `policy-axi --candidates <candidates-json> --quota <snapshot-json>`,
+passing each argument as one compact JSON value.
 The command prints either `ROUTE <harness>/<model>/<effort>` or `NO_ROUTE <reason>`.
-Report that answer as the policy result and never substitute your own choice for it.
 MD
 
 cat > "$FAKEBIN/policy-axi" <<'SH'
 #!/usr/bin/env bash
 set -u
-if [ "${1:-}" != --candidates ] || [ "$#" -ne 2 ]; then
+if [ "${1:-}" != --candidates ] || [ "${3:-}" != --quota ] || [ "$#" -ne 4 ]; then
   printf 'unexpected policy-axi invocation: %s\n' "$*" >&2
   exit 64
 fi
-printf '%s\n' "$2" >> "${POLICY_AXI_CALLS:?}"
+printf '%s\t%s\n' "$2" "$4" >> "${POLICY_AXI_CALLS:?}"
 cat "${POLICY_AXI_VERDICT:?}"
 SH
 chmod +x "$FAKEBIN/policy-axi"
+
+cat > "$SNAPSHOT" <<'JSON'
+{"schemaVersion":3,"providers":[{"provider":"claude","quotaSemantics":{"description":"The all_models scope bounds every Claude model.","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":9,"boundedBy":["weekly"],"runway":{"status":"projected_exhaustion","usableRunwaySeconds":600,"projectedExhaustedAt":"2030-01-01T00:10:00Z","limitingWindowId":"weekly","projectionConfidence":"established","projectionBasis":"cycle_average"}}]}},{"provider":"codex","quotaSemantics":{"description":"The all_models scope bounds every Codex model.","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":72,"boundedBy":["weekly"],"runway":{"status":"projected_exhaustion","usableRunwaySeconds":28800,"projectedExhaustedAt":"2030-01-01T08:00:00Z","limitingWindowId":"weekly","projectionConfidence":"established","projectionBasis":"cycle_average"}}]}}]}
+JSON
 
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
@@ -92,9 +98,7 @@ if [ "${1:-}" != --json ] || [ "$#" -ne 1 ]; then
   printf 'unexpected quota-axi invocation: %s\n' "$*" >&2
   exit 64
 fi
-cat <<'JSON'
-{"schemaVersion":3,"providers":[{"provider":"claude","quotaSemantics":{"description":"The all_models scope bounds every Claude model.","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":9,"boundedBy":["weekly"],"runway":{"status":"projected_exhaustion","usableRunwaySeconds":600,"projectedExhaustedAt":"2030-01-01T00:10:00Z","limitingWindowId":"weekly","projectionConfidence":"established","projectionBasis":"cycle_average"}}]}},{"provider":"codex","quotaSemantics":{"description":"The all_models scope bounds every Codex model.","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":72,"boundedBy":["weekly"],"runway":{"status":"projected_exhaustion","usableRunwaySeconds":28800,"projectedExhaustedAt":"2030-01-01T08:00:00Z","limitingWindowId":"weekly","projectionConfidence":"established","projectionBasis":"cycle_average"}}]}}]}
-JSON
+cat "${QUOTA_AXI_SNAPSHOT:?}"
 SH
 chmod +x "$FAKEBIN/quota-axi"
 
@@ -117,7 +121,8 @@ run_intake() {
         POLICY_AXI_CALLS="$POLICY_CALLS" \
         POLICY_AXI_VERDICT="$VERDICT" \
         QUOTA_AXI_CALLS="$QUOTA_CALLS" \
-        pi --print --approve --no-session --no-context-files --no-extensions \
+        QUOTA_AXI_SNAPSHOT="$SNAPSHOT" \
+        pi --print --approve --no-session --no-extensions \
           --no-skills --skill .agents/skills --tools bash \
           --model openai-codex/gpt-5.6-sol --thinking high \
           "$prompt"
@@ -155,19 +160,28 @@ out=$(run_intake "$INTAKE $REPORT_CONTRACT") \
 
 [ "$(grep -c . "$POLICY_CALLS")" = 1 ] \
   || fail "policy-service delegation: expected exactly one policy call, got: $(cat "$POLICY_CALLS")"
+[ "$(cat "$QUOTA_CALLS")" = "--json" ] \
+  || fail "policy-service delegation: expected one shared quota-axi --json snapshot, got: $(cat "$QUOTA_CALLS")"
 
-handed=$(jq -S -c '[.[] | {harness, model, effort}]' < "$POLICY_CALLS") \
+handed=$(cut -f1 < "$POLICY_CALLS" | jq -S -c '[.[] | {harness, model, effort}]') \
   || fail "policy-service delegation: policy did not receive a JSON candidate array: $(cat "$POLICY_CALLS")"
 expected=$(jq -S -c '[.rules[0].use[] | {harness, model, effort}]' "$HOME_DIR/config/crew-dispatch.json")
 [ "$handed" = "$expected" ] \
   || fail "policy-service delegation: policy did not receive the complete configured array: $handed"
+
+# The snapshot the policy was handed must be the one acquired at this intake,
+# not a summary of it and not evidence the policy had to re-acquire itself.
+handed_snapshot=$(cut -f2 < "$POLICY_CALLS" | jq -S -c .) \
+  || fail "policy-service delegation: policy did not receive a JSON quota snapshot: $(cat "$POLICY_CALLS")"
+[ "$handed_snapshot" = "$(jq -S -c . "$SNAPSHOT")" ] \
+  || fail "policy-service delegation: policy received an altered quota snapshot: $handed_snapshot"
 
 # The policy names the last configured candidate, so array-order or
 # first-candidate bias cannot produce this answer.
 printf '%s\n' "$out" | grep -Fxq "DISPATCH=grok/grok-4/high" \
   || fail "policy-service delegation: expected the policy's concrete profile, got: $out"
 printf '%s\n' "$out"
-echo "ok - a policy-service rule hands the complete array to its named policy and dispatches only that answer"
+echo "ok - a policy-service rule hands the complete array and one shared quota snapshot to its named policy and dispatches only that answer"
 
 # --- Case 2: an explicit no-route stops the intake instead of falling back ---
 
@@ -178,6 +192,8 @@ out=$(run_intake "$INTAKE $REPORT_CONTRACT") \
 
 [ "$(grep -c . "$POLICY_CALLS")" = 1 ] \
   || fail "policy-service no-route: expected exactly one policy call, got: $(cat "$POLICY_CALLS")"
+[ "$(cat "$QUOTA_CALLS")" = "--json" ] \
+  || fail "policy-service no-route: expected one shared quota-axi --json snapshot, got: $(cat "$QUOTA_CALLS")"
 printf '%s\n' "$out" | grep -Fxq "DISPATCH=NONE" \
   || fail "policy-service no-route: expected an explicit no-dispatch report, got: $out"
 printf '%s\n' "$out" | grep -Eq '^DISPATCH=(claude|codex|grok)' \

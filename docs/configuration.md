@@ -279,18 +279,22 @@ The single-object form stays fully backward-compatible, and every profile needs 
 Profile `model` and `effort` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
 Every profile array defaults to the `quota-balanced` selector and is resolved through `quota-array-dispatch`.
-A rule may instead use `select: "policy-service"` with a non-empty `policy`; firstmate loads that local skill and hands it the full array, never an already-selected profile.
+A rule may instead use `select: "policy-service"` with a non-empty `policy`; firstmate loads that local skill and hands it the complete array in configured order together with the one shared `quota-axi --json` snapshot it acquired for that intake, never an already-selected profile and never a candidate set without that snapshot.
 The top-level default uses the analogous `default_select` and `default_policy` fields.
 `policy` and `default_policy` are invalid without their corresponding `policy-service` selector, and `default_select` is invalid without `default`.
+`policy` and `default_policy` name one skill directory, so each must start with a letter or digit, use only `[A-Za-z0-9._-]`, and never be a path.
 Any explicit selector requires its corresponding `use` or `default` profile set to be an array; selectors are never meaningful on the single-profile object form.
+That array requirement is the only tightening in this schema over earlier undocumented `select` use: a legacy rule that paired `select` with a single-profile object must move that object into a one-element array, which bootstrap reports as `select requires an array use` until it is corrected.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
 Malformed JSON, an empty or malformed rule/default array, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
+A named policy skill that this home cannot load is reported separately as `CREW_DISPATCH: policy skill not installed in this home - <name> ...`, because a misspelled or absent policy blocks that rule's dispatch and never degrades to another selector.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
+Each named policy skill is a declared local dependency of that inherited file: a git-excluded `.agents/skills/<policy>/` directory in the primary home travels into local secondmate homes on the same propagation, and every receiving home validates it at its own session start.
 
 ## Toolchain
 

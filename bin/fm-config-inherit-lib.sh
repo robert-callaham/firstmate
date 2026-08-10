@@ -19,7 +19,10 @@
 # Secondmate; see docs/trace-context.md.
 # It also pushes
 # the one primary-authoritative shared captain-preference file,
-# data/captain-shared.md, into each secondmate home's data/ as a read-only copy.
+# data/captain-shared.md, into each secondmate home's data/ as a read-only copy,
+# and the local skills that config/crew-dispatch.json names as policy-service
+# owners, which are dependencies of that file rather than items of their own
+# (see FM_INHERITABLE_POLICY_SKILL_ROOT_REL below).
 #
 # Usage: . bin/fm-config-inherit-lib.sh   (no FM_* setup required)
 #
@@ -65,6 +68,18 @@ FM_SHARED_CAPTAIN_MODE="444"
 # environment only in tests. Items must not contain whitespace.
 FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context}"
 
+# Local skills named by config/crew-dispatch.json policy-service selectors are
+# declared DEPENDENCIES of that inherited file rather than separate items: a
+# secondmate that inherits a rule naming a policy it does not have cannot
+# dispatch that rule at all, and AGENTS.md section 4 forbids falling back. They
+# live under this home-relative root, and only the git-excluded ones travel -
+# a policy skill tracked in the repository already arrives with the ordinary
+# tracked-files fast-forward. This is a LOCAL-route category: the remote
+# allowlist in fm_config_inherit_items stays file-only, so a remote home
+# converges the dispatch file and reports its own missing policy at session
+# start (bin/fm-bootstrap.sh) instead of silently selecting around it.
+FM_INHERITABLE_POLICY_SKILL_ROOT_REL=".agents/skills"
+
 # Items whose value is a home-SESSION enablement decision rather than durable
 # local configuration. They are inherited at the launch convergence point, where
 # the primary also hands the new process its frozen on/off decision, and left
@@ -91,6 +106,35 @@ fm_config_inherit_items() {
     printf 'config/%s\n' "$item"
   done
   printf '%s\n' "$FM_SHARED_CAPTAIN_REL"
+}
+
+# fm_dispatch_policy_skill_names <crew-dispatch.json>
+# The ONE owner of "which local skills does this dispatch file require": every
+# distinct non-empty policy owner named by a policy-service rule or by the
+# policy-service default, one per line. Propagation and the session-start
+# validation in bin/fm-bootstrap.sh both read this, so a home can never
+# converge a skill set that differs from the set its own bootstrap checks.
+fm_dispatch_policy_skill_names() {
+  local file=$1
+  [ -n "$file" ] && [ -f "$file" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  jq -r '
+    ([(.rules // [])[]? | select(.select? == "policy-service") | .policy? // empty]
+      + (if .default_select? == "policy-service" then [.default_policy? // empty] else [] end))
+    | map(select((type == "string") and (length > 0)))
+    | unique
+    | .[]
+  ' "$file" 2>/dev/null || true
+}
+
+# True when <name> is a plain skill directory name and never a path. This is
+# the same shape bin/fm-bootstrap.sh rejects as a malformed policy owner, so a
+# name that reaches propagation has already been reported where it is visible.
+fm_policy_skill_name_safe() {
+  case "$1" in
+    ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
 }
 
 fm_inherit_file_mode() {
@@ -151,22 +195,143 @@ copy_inheritable_file() {
   return 1
 }
 
-destination_allows_inherited_item() {
-  local dest_config=$1 item=$2 dest_parent dest_name dest_parent_abs top dest_path rel_path
-  dest_parent=${dest_config%/*}
-  dest_name=${dest_config##*/}
-  [ -n "$dest_parent" ] && [ "$dest_parent" != "$dest_config" ] || return 1
-  dest_parent_abs=$(cd "$dest_parent" 2>/dev/null && pwd -P) || return 1
-  if ! git -C "$dest_parent_abs" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+# True when <holder-dir>/<item> is git-excluded where it sits, or when the
+# holder is not inside a git work tree at all. One owner for the "is this path
+# local material here" question, asked of a destination before writing into it
+# and of the primary before treating a policy skill as local rather than
+# tracked repository material.
+inherited_item_is_local_material() {
+  local holder=$1 item=$2 holder_parent holder_name holder_abs top path rel_path
+  holder_parent=${holder%/*}
+  holder_name=${holder##*/}
+  [ -n "$holder_parent" ] && [ "$holder_parent" != "$holder" ] || return 1
+  holder_abs=$(cd "$holder_parent" 2>/dev/null && pwd -P) || return 1
+  if ! git -C "$holder_abs" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     return 0
   fi
-  top=$(git -C "$dest_parent_abs" rev-parse --show-toplevel 2>/dev/null) || return 1
-  dest_path="$dest_parent_abs/$dest_name/$item"
-  case "$dest_path" in
-    "$top"/*) rel_path=${dest_path#"$top"/} ;;
+  top=$(git -C "$holder_abs" rev-parse --show-toplevel 2>/dev/null) || return 1
+  path="$holder_abs/$holder_name/$item"
+  case "$path" in
+    "$top"/*) rel_path=${path#"$top"/} ;;
     *) return 1 ;;
   esac
   git -C "$top" check-ignore -q -- "$rel_path" 2>/dev/null
+}
+
+destination_allows_inherited_item() {
+  inherited_item_is_local_material "$1" "$2"
+}
+
+# A propagatable policy skill is an ordinary directory of ordinary files with a
+# SKILL.md at its root. Anything else - a symlink anywhere in the tree, a device
+# node, a directory with no skill entry point - is refused rather than copied.
+inheritable_skill_tree_safe() {
+  local dir=$1 entry
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  [ -f "$dir/SKILL.md" ] && [ ! -L "$dir/SKILL.md" ] || return 1
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    [ ! -L "$entry" ] || return 1
+    [ -d "$entry" ] || [ -f "$entry" ] || return 1
+  done < <(find "$dir" -mindepth 1 2>/dev/null)
+  return 0
+}
+
+# Replace <dest-dir> with a copy of <src-dir> through a staged sibling, so a
+# reader of the destination never sees a half-written skill and a failed copy
+# leaves the previous tree in place.
+copy_inheritable_skill_dir() {
+  local src=$1 dest=$2 dest_parent stage retired
+  dest_parent=${dest%/*}
+  [ -n "$dest_parent" ] && [ "$dest_parent" != "$dest" ] || return 1
+  mkdir -p "$dest_parent" 2>/dev/null || return 1
+  stage=$(mktemp -d "$dest_parent/.fm-inherit-skill.XXXXXX" 2>/dev/null) || return 1
+  if ! cp -R "$src/." "$stage/" 2>/dev/null; then
+    rm -rf "$stage" 2>/dev/null || true
+    return 1
+  fi
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+    mv -f "$stage" "$dest" 2>/dev/null && return 0
+    rm -rf "$stage" 2>/dev/null || true
+    return 1
+  fi
+  retired=$(mktemp -d "$dest_parent/.fm-inherit-skill-retired.XXXXXX" 2>/dev/null) || {
+    rm -rf "$stage" 2>/dev/null || true
+    return 1
+  }
+  if ! mv -f "$dest" "$retired/current" 2>/dev/null; then
+    rm -rf "$stage" "$retired" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f "$stage" "$dest" 2>/dev/null; then
+    mv -f "$retired/current" "$dest" 2>/dev/null || true
+    rm -rf "$stage" "$retired" 2>/dev/null || true
+    return 1
+  fi
+  rm -rf "$retired" 2>/dev/null || true
+  return 0
+}
+
+# propagate_policy_skills <src-home> <dest-home> <src-config-dir>
+# Converge the local skills that the primary's crew-dispatch.json names as
+# policy owners into a secondmate home. SILENT on stdout like the config path;
+# notable events go to stderr and to FM_CONFIG_INHERIT_REPORT as
+# ".agents/skills/<name>". A tracked policy skill is left to the tracked-files
+# fast-forward, and a policy the primary itself does not have is a warning
+# here - the receiving home's own bootstrap owns the actionable diagnostic.
+propagate_policy_skills() {
+  local src_home=$1 dest_home=$2 src_config=$3
+  local name item src dest reason rc=0
+  [ -n "$src_home" ] && [ -n "$dest_home" ] && [ -n "$src_config" ] || return 1
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    item="$FM_INHERITABLE_POLICY_SKILL_ROOT_REL/$name"
+    if ! fm_policy_skill_name_safe "$name"; then
+      reason="policy owner is not a plain skill directory name"
+      warn_inheritable_config_error "$item" "$src_home" "$reason"
+      record_inheritable_config_result "$item" error "$reason"
+      rc=1
+      continue
+    fi
+    src="$src_home/$FM_INHERITABLE_POLICY_SKILL_ROOT_REL/$name"
+    dest="$dest_home/$FM_INHERITABLE_POLICY_SKILL_ROOT_REL/$name"
+    if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+      reason="named policy skill is not present in the primary home"
+      warn_inheritable_config_skip "$item" "$dest_home" "$reason"
+      record_inheritable_config_result "$item" skipped "$reason"
+      continue
+    fi
+    if ! inheritable_skill_tree_safe "$src"; then
+      reason="unsafe or incomplete primary policy skill"
+      warn_inheritable_config_error "$item" "$src" "$reason"
+      record_inheritable_config_result "$item" error "$reason"
+      rc=1
+      continue
+    fi
+    if ! inherited_item_is_local_material "$src_home/$FM_INHERITABLE_POLICY_SKILL_ROOT_REL" "$name"; then
+      record_inheritable_config_result "$item" unchanged "tracked repository skill"
+      continue
+    fi
+    if ! inherited_item_is_local_material "$dest_home/$FM_INHERITABLE_POLICY_SKILL_ROOT_REL" "$name"; then
+      reason=$(inheritable_config_skip_reason)
+      warn_inheritable_config_skip "$item" "$dest_home" "$reason"
+      record_inheritable_config_result "$item" skipped "$reason"
+      continue
+    fi
+    if [ -d "$dest" ] && [ ! -L "$dest" ] && diff -r -q "$src" "$dest" >/dev/null 2>&1; then
+      record_inheritable_config_result "$item" unchanged ""
+      continue
+    fi
+    if copy_inheritable_skill_dir "$src" "$dest"; then
+      record_inheritable_config_result "$item" pushed ""
+    else
+      reason="failed to copy"
+      warn_inheritable_config_error "$item" "$dest" "$reason"
+      record_inheritable_config_result "$item" error "$reason"
+      rc=1
+    fi
+  done < <(fm_dispatch_policy_skill_names "$src_config/crew-dispatch.json")
+  return "$rc"
 }
 
 # propagate_inheritable_config <src-config-dir> <dest-config-dir>
@@ -435,6 +600,7 @@ propagate_secondmate_inheritance() {
   [ -n "$src_data" ] || src_data="$src_home/data"
   rc=0
   propagate_inheritable_config "$src_config" "$dest_home/config" || rc=1
+  propagate_policy_skills "$src_home" "$dest_home" "$src_config" || rc=1
   propagate_shared_captain_preferences "$src_data" "$dest_home/data" || rc=1
   return "$rc"
 }

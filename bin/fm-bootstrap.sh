@@ -984,6 +984,23 @@ EOF
   echo "FMX: X mode on - relay poll armed via state/x-watch.check.sh; 30s watcher cadence in config/x-mode.env"
 }
 
+# Report every policy owner in <file> whose skill this home cannot load.
+# Returns non-zero when at least one is missing. The skill set comes from the
+# same owner the inheritance path uses (fm_dispatch_policy_skill_names), so a
+# converged home and its own diagnostic can never disagree about the set.
+crew_dispatch_policies_resolve() {
+  local file=$1 name missing=0 root
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    for root in "$FM_HOME" "$FM_ROOT"; do
+      [ -f "$root/.agents/skills/$name/SKILL.md" ] && continue 2
+    done
+    echo "CREW_DISPATCH: policy skill not installed in this home - $name (expected .agents/skills/$name/SKILL.md); install it or correct config/crew-dispatch.json, because policy-service never falls back"
+    missing=1
+  done < <(fm_dispatch_policy_skill_names "$file")
+  [ "$missing" = 0 ]
+}
+
 crew_dispatch_validate() {
   local file err
   file="$CONFIG/crew-dispatch.json"
@@ -1024,6 +1041,11 @@ crew_dispatch_validate() {
     def known_select($s): (known_selects | index($s)) != null;
     def unknown_selects:
       [(.rules // [])[]? | .select? // empty | select(known_select(.) | not)] | unique;
+    def policy_owners:
+      [(.rules // [])[]? | select(.select? == "policy-service") | .policy? // empty]
+      + (if .default_select? == "policy-service" then [.default_policy? // empty] else [] end);
+    def unusable_policy_owners:
+      [policy_owners[] | select((type == "string") and (test("^[A-Za-z0-9][A-Za-z0-9._-]*$") | not))] | unique;
     def bad_efforts:
       configured_profiles
       | map({h: .harness, e: .effort})
@@ -1055,6 +1077,8 @@ crew_dispatch_validate() {
     elif has("default_select") and (has("default") | not) then "default_select requires default"
     elif has("default_policy") and .default_select? != "policy-service" then "default_policy is only valid with default_select policy-service"
     elif .default_select? == "policy-service" and ((.default_policy? | type) != "string" or (.default_policy | length) == 0) then "default policy-service needs non-empty default_policy"
+    elif (unusable_policy_owners | length) > 0 then
+      "policy must be a plain skill directory name: " + (unusable_policy_owners | join(", "))
     elif has("default_select") and ((.default? | type) != "array") then "default_select requires an array default"
     elif has("default") and ((.default | type) != "object" and (.default | type) != "array") then "default must be a profile object or non-empty profile array"
     elif has("default") and ((.default | type) == "array" and (.default | length) == 0) then "default needs at least one profile"
@@ -1075,6 +1099,13 @@ crew_dispatch_validate() {
   ' "$file" 2>/dev/null || true)
   if [ -n "$err" ]; then
     echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
+    return 0
+  fi
+  # A policy owner is only a name until the skill it names exists in THIS home.
+  # Every home validates its own copy, because an inherited rule reaches homes
+  # the primary never checked, and AGENTS.md section 4 forbids dispatching that
+  # rule any other way once the policy cannot be loaded.
+  if ! crew_dispatch_policies_resolve "$file"; then
     return 0
   fi
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then

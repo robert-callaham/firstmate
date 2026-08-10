@@ -1093,10 +1093,19 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
 
+# Every policy owner named by a dispatch fixture has to resolve to a skill in
+# that home, or bootstrap reports it instead of the facts under test.
+seed_policy_skill() {
+  local home=$1 name=$2
+  mkdir -p "$home/.agents/skills/$name"
+  printf '%s\n' "# $name" > "$home/.agents/skills/$name/SKILL.md"
+}
+
 test_crew_dispatch_policy_service_is_verbose_bootstrap_info() {
   local case_dir fakebin out expect
   case_dir="$TMP_ROOT/dispatch-policy-service"
   mkdir -p "$case_dir/home/config"
+  seed_policy_skill "$case_dir/home" governor-admission
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' '{"rules":[{"when":"budgeted feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex"}],"select":"policy-service","policy":"governor-admission"}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}],"default_select":"policy-service","default_policy":"governor-admission"}' > "$case_dir/home/config/crew-dispatch.json"
   fakebin=$(make_fake_toolchain "$case_dir")
@@ -1118,6 +1127,7 @@ test_crew_dispatch_validation() {
     n=$((n + 1))
     case_dir="$TMP_ROOT/dispatch-$n"
     mkdir -p "$case_dir/home/config"
+    seed_policy_skill "$case_dir/home" governor-admission
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$body" > "$case_dir/home/config/crew-dispatch.json"
     fakebin=$(make_fake_toolchain "$case_dir")
@@ -1154,6 +1164,10 @@ non-string policy owner is flagged^{"rules":[{"when":"big feature","use":[{"harn
 policy owner without policy-service is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy is only valid with select policy-service
 policy owner with quota-balanced is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"quota-balanced","policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy is only valid with select policy-service
 policy-service array still validates harness and effort^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"opencode","effort":"high"}],"select":"policy-service","policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
+policy owner naming a path is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"../governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy must be a plain skill directory name: ../governor-admission
+default policy owner naming a path is flagged^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"policy-service","default_policy":"policies/governor"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy must be a plain skill directory name: policies/governor
+misspelled policy owner is an actionable per-home diagnostic^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"govenor-admission"}]}^exact^CREW_DISPATCH: policy skill not installed in this home - govenor-admission (expected .agents/skills/govenor-admission/SKILL.md); install it or correct config/crew-dispatch.json, because policy-service never falls back
+missing default policy owner is an actionable per-home diagnostic^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"policy-service","default_policy":"absent-policy"}^exact^CREW_DISPATCH: policy skill not installed in this home - absent-policy (expected .agents/skills/absent-policy/SKILL.md); install it or correct config/crew-dispatch.json, because policy-service never falls back
 array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
 one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^

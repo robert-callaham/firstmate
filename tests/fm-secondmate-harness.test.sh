@@ -26,6 +26,10 @@
 #      It is primary-authoritative
 #      (re-pushed at secondmate spawn, on the bootstrap secondmate sweep, and by
 #      config push).
+#      A local route also carries the declared dependencies of
+#      config/crew-dispatch.json: the git-excluded .agents/skills/<policy>/ trees
+#      its policy-service selectors name, so an inherited rule reaches a home
+#      that can load its policy.
 #      config/secondmate-harness is deliberately NOT inherited (secondmates do
 #      not spawn secondmates). After a successful push that changes allowlisted
 #      config under an already-running home, a literal-content reread instruction
@@ -388,6 +392,79 @@ test_propagate_lib() {
   [ ! -e "$guard_repo/config/crew-dispatch.json" ] || fail "guard skip still copied the unignored item"
 
   pass "B1 propagate_inheritable_config: copy, idempotence, convergence, absence-mirror, exclusion, no-op, skip diagnostics"
+}
+
+# A policy-service rule is only usable in a home that also has the skill it
+# names, so the named skill travels with the dispatch file it belongs to.
+test_propagate_policy_skills() {
+  local d primary second report stderr m1 m2
+
+  d="$TMP_ROOT/policy-skills"
+  primary="$d/primary"
+  second="$d/second"
+  report="$d/report"
+  stderr="$d/stderr"
+  mkdir -p "$primary/config" "$primary/data" "$second/config" "$second/data" \
+    "$primary/.agents/skills/governor-admission/references" \
+    "$second/.agents/skills"
+  printf '%s\n' '{"rules":[{"when":"budgeted","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"governor-admission"}]}' \
+    > "$primary/config/crew-dispatch.json"
+  printf '# governor-admission v1\n' > "$primary/.agents/skills/governor-admission/SKILL.md"
+  printf 'ledger v1\n' > "$primary/.agents/skills/governor-admission/references/ledger.md"
+
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" \
+    >/dev/null 2>"$stderr" || fail "policy skill propagation returned non-zero: $(cat "$stderr")"
+  [ "$(cat "$second/.agents/skills/governor-admission/SKILL.md")" = '# governor-admission v1' ] \
+    || fail "named policy skill did not reach the secondmate home"
+  [ "$(cat "$second/.agents/skills/governor-admission/references/ledger.md")" = 'ledger v1' ] \
+    || fail "policy skill support files did not reach the secondmate home"
+  assert_contains "$(cat "$report")" ".agents/skills/governor-admission	pushed" \
+    "policy skill propagation was not reported"
+
+  # Idempotent: an unchanged re-run leaves the destination tree alone.
+  m1=$(date -r "$second/.agents/skills/governor-admission/SKILL.md" +%s 2>/dev/null \
+    || stat -c %Y "$second/.agents/skills/governor-admission/SKILL.md")
+  sleep 1
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  m2=$(date -r "$second/.agents/skills/governor-admission/SKILL.md" +%s 2>/dev/null \
+    || stat -c %Y "$second/.agents/skills/governor-admission/SKILL.md")
+  [ "$m1" = "$m2" ] || fail "unchanged policy skill re-run churned mtime ($m1 -> $m2)"
+  assert_contains "$(cat "$report")" ".agents/skills/governor-admission	unchanged" \
+    "unchanged policy skill was not reported as unchanged"
+
+  # Primary-authoritative: a changed primary tree converges, extra destination
+  # files from an older generation do not survive.
+  printf '# governor-admission v2\n' > "$primary/.agents/skills/governor-admission/SKILL.md"
+  printf 'stale\n' > "$second/.agents/skills/governor-admission/stale.md"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>&1
+  [ "$(cat "$second/.agents/skills/governor-admission/SKILL.md")" = '# governor-admission v2' ] \
+    || fail "changed policy skill did not converge downstream"
+  [ ! -e "$second/.agents/skills/governor-admission/stale.md" ] \
+    || fail "a stale destination file survived policy skill convergence"
+
+  # A named policy the primary itself does not have is a visible skip, never a
+  # silent miss - the receiving home's bootstrap owns the actionable report.
+  printf '%s\n' '{"rules":[{"when":"budgeted","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"absent-policy"}]}' \
+    > "$primary/config/crew-dispatch.json"
+  : > "$report"
+  FM_CONFIG_INHERIT_REPORT="$report" propagate_secondmate_inheritance "$primary" "$second" \
+    >/dev/null 2>"$stderr" || fail "a missing primary policy skill must not fail propagation"
+  assert_contains "$(cat "$stderr")" "fm-config-inherit: warning: skipped .agents/skills/absent-policy" \
+    "a missing primary policy skill produced no warning"
+  assert_contains "$(cat "$report")" ".agents/skills/absent-policy	skipped" \
+    "a missing primary policy skill was not reported as skipped"
+
+  # A policy owner that is not a plain skill name never becomes a path write.
+  printf '%s\n' '{"rules":[{"when":"budgeted","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"../escape"}]}' \
+    > "$primary/config/crew-dispatch.json"
+  if propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>"$stderr"; then
+    fail "a path-shaped policy owner was accepted"
+  fi
+  [ ! -e "$d/escape" ] || fail "a path-shaped policy owner escaped the skills root"
+
+  pass "B2 propagate_policy_skills: named skills travel with their dispatch file, converge, and refuse unsafe owners"
 }
 
 # ===========================================================================
@@ -2468,6 +2545,7 @@ test_secondmate_model_effort_tokens
 test_pi_signed_detection_and_session_lock_identity
 test_dash_leading_process_names_are_basename_operands
 test_propagate_lib
+test_propagate_policy_skills
 test_spawn_split_and_inherit
 test_spawn_backward_compat_crew_fallback
 test_spawn_bare_backward_compat
