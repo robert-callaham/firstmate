@@ -283,6 +283,7 @@ A rule may instead use `select: "policy-service"` with a non-empty `policy`; fir
 The top-level default uses the analogous `default_select` and `default_policy` fields.
 `policy` and `default_policy` are invalid without their corresponding `policy-service` selector, and `default_select` is invalid without `default`.
 `policy` and `default_policy` name one skill directory, so each must start with a letter or digit, use only `[A-Za-z0-9._-]`, and never be a path.
+The named skill resolves from `.agents/skills/<policy>/SKILL.md` in this home or in the tracked code root; because this repository's `.gitignore` does not cover `.agents/skills/`, keep a private policy out of the public repository by appending its directory to that home's own local exclude file (`git rev-parse --git-path info/exclude`), which is also what marks it as inheritable local material rather than tracked template material.
 Any explicit selector requires its corresponding `use` or `default` profile set to be an array; selectors are never meaningful on the single-profile object form.
 That array requirement is the only tightening in this schema over earlier undocumented `select` use: a legacy rule that paired `select` with a single-profile object must move that object into a one-element array, which bootstrap reports as `select requires an array use` until it is corrected.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.

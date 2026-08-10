@@ -59,7 +59,7 @@ CONTRIBUTING.md      contributor workflow and repo conventions
 README.md            public overview and development notes
 .github/workflows/   shared CI and PR enforcement, committed
 .tasks.toml          tracked tasks-axi markdown backend config for the default backlog backend (section 10)
-.agents/skills/      firstmate-loaded internal skills, committed; each carries metadata.internal=true for installers
+.agents/skills/      firstmate-loaded internal skills, committed; each carries metadata.internal=true for installers. A policy skill named by a config/crew-dispatch.json policy-service selector may also sit here as LOCAL git-excluded material that is not shared tracked material (section 4; docs/configuration.md)
 .claude/skills       symlink to .agents/skills for claude compatibility
 skills/              standalone public installer-facing skills, committed; not loaded by firstmate
 bin/                 helper scripts, committed; read each script's header before first use
@@ -520,7 +520,7 @@ These skills are not captain-invocable; load them only at their precise triggers
 - `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `STARTUP_MEMORY_BUDGET:`, `CREW_DISPATCH: invalid`, `CREW_DISPATCH: policy skill`, `FLEET_SYNC:`, `NETWORK_CHECKS:`, `PR_CHECK_MIGRATION:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `SECONDMATE_HANDOFF:`, `NUDGE_SECONDMATES:`, or `FMX:`); silence and `BOOTSTRAP_INFO:` need no load.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding, regardless of the project's `yolo` posture.
-- `quota-array-dispatch` - load before choosing among a matched crew-dispatch profile array from current quota-axi output.
+- `quota-array-dispatch` - load before choosing among a matched crew-dispatch profile array from current quota-axi output under the `quota-balanced` selector; a `policy-service` array loads its named `policy` skill instead (section 4).
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
 - `firstmate-orca` - load before switching to Orca, spawning or supervising Orca-backed work, smoke-testing Orca backend behavior, debugging Orca task state, or reconciling Orca-backed task metadata.
 - `project-management` - load before adding, creating, removing, or initializing a project.
