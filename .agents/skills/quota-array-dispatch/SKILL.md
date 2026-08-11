@@ -3,7 +3,8 @@ name: quota-array-dispatch
 description: >-
   Agent-only decision procedure for resolving a matched crew-dispatch profile
   array from current quota-axi output, including effective headroom and usable-runway evidence.
-  Load when a dispatch rule or default resolves to more than one profile candidate.
+  Load when a dispatch rule or default resolves to more than one profile candidate under the
+  built-in quota-balanced selector; a policy-service rule delegates to its own named policy skill instead.
 user-invocable: false
 metadata:
   internal: true
@@ -11,7 +12,8 @@ metadata:
 
 # quota-array-dispatch
 
-This skill is the single owner of the completion-aware profile-array selection procedure.
+This skill is the single owner of the completion-aware profile-array selection procedure for the built-in `quota-balanced` selector, which is also what an array with no explicit `select` uses.
+An array whose rule sets `select: "policy-service"` is not yours: that intake delegates the whole candidate array and its one shared snapshot to the rule's named `policy` skill, and nothing here may be used to preselect, re-rank, or second-guess that answer.
 `AGENTS.md` section 4 owns the always-loaded intake boundary, load trigger, malformed-config refusal, every-candidate accounting, and strongest-reasoning/tie safety rules.
 `harness-adapters` owns harness verification, model/provider discovery, and effort fallback.
 `quota-axi` remains data-only, reports whatever granularity the vendor supplies, and never recommends, selects, ranks, or infers a route.

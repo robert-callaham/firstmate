@@ -1093,6 +1093,32 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
 
+# Every policy owner named by a dispatch fixture has to resolve to a skill in
+# that home, or bootstrap reports it instead of the facts under test.
+seed_policy_skill() {
+  local home=$1 name=$2
+  mkdir -p "$home/.agents/skills/$name"
+  printf '%s\n' "# $name" > "$home/.agents/skills/$name/SKILL.md"
+}
+
+test_crew_dispatch_policy_service_is_verbose_bootstrap_info() {
+  local case_dir fakebin out expect
+  case_dir="$TMP_ROOT/dispatch-policy-service"
+  mkdir -p "$case_dir/home/config"
+  seed_policy_skill "$case_dir/home" governor-admission
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' '{"rules":[{"when":"budgeted feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex"}],"select":"policy-service","policy":"governor-admission"}],"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}],"default_select":"policy-service","default_policy":"governor-admission"}' > "$case_dir/home/config/crew-dispatch.json"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_BOOTSTRAP_VERBOSE_FACTS=1 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: budgeted feature -> policy-service:governor-admission[claude/claude-sonnet-5/high, codex]\nBOOTSTRAP_INFO: crew dispatch default: policy-service:governor-admission[pi/anthropic/claude-sonnet-5, grok]'
+  [ "$out" = "$expect" ] || fail "policy-service dispatch verbose info block mismatch"$'\n'"expected: $expect"$'\n'"actual:   $out"
+  pass "bootstrap surfaces delegated policy-service dispatch selectors with their policy owner"
+}
+
 test_crew_dispatch_validation() {
   local label body expect mode case_dir fakebin out n
   n=0
@@ -1101,6 +1127,7 @@ test_crew_dispatch_validation() {
     n=$((n + 1))
     case_dir="$TMP_ROOT/dispatch-$n"
     mkdir -p "$case_dir/home/config"
+    seed_policy_skill "$case_dir/home" governor-admission
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$body" > "$case_dir/home/config/crew-dispatch.json"
     fakebin=$(make_fake_toolchain "$case_dir")
@@ -1129,9 +1156,31 @@ unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{
 kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
 unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
 array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^empty^
+array use with policy-service is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"governor-admission"}]}^empty^
+policy-service requires policy owner^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy-service rules need non-empty policy
+policy-service object use is flagged^{"rules":[{"when":"big feature","use":{"harness":"claude"},"select":"policy-service","policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - select requires an array use
+quota-balanced object use is flagged^{"rules":[{"when":"big feature","use":{"harness":"claude"},"select":"quota-balanced"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - select requires an array use
+non-string policy owner is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":42}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy-service rules need non-empty policy
+policy owner without policy-service is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy is only valid with select policy-service
+policy owner with quota-balanced is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"quota-balanced","policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy is only valid with select policy-service
+policy-service array still validates harness and effort^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"opencode","effort":"high"}],"select":"policy-service","policy":"governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
+policy owner naming a path is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"../governor-admission"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy must be a plain skill directory name: ../governor-admission
+default policy owner naming a path is flagged^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"policy-service","default_policy":"policies/governor"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - policy must be a plain skill directory name: policies/governor
+misspelled policy owner is an actionable per-home diagnostic^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"govenor-admission"}]}^exact^CREW_DISPATCH: policy skill not installed in this home - govenor-admission (expected .agents/skills/govenor-admission/SKILL.md); install it or correct config/crew-dispatch.json, because policy-service never falls back
+missing default policy owner is an actionable per-home diagnostic^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"policy-service","default_policy":"absent-policy"}^exact^CREW_DISPATCH: policy skill not installed in this home - absent-policy (expected .agents/skills/absent-policy/SKILL.md); install it or correct config/crew-dispatch.json, because policy-service never falls back
 array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
 one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
+default policy-service is accepted^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"policy-service","default_policy":"governor-admission"}^empty^
+explicit quota-balanced default_select is accepted^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"quota-balanced"}^empty^
+default policy-service requires owner^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"policy-service"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default policy-service needs non-empty default_policy
+malformed default_select is flagged^{"default":[{"harness":"claude"}],"default_select":7}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default_select must be a non-empty string
+unknown default_select is flagged^{"default":[{"harness":"claude"}],"default_select":"mystery"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown default_select: mystery
+default_select without default is flagged^{"default_select":"quota-balanced"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default_select requires default
+default policy owner without policy-service is flagged^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_policy":"governor-admission"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default_policy is only valid with default_select policy-service
+default policy owner with quota-balanced is flagged^{"default":[{"harness":"claude"},{"harness":"codex"}],"default_select":"quota-balanced","default_policy":"governor-admission"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default_policy is only valid with default_select policy-service
+default policy-service object default is flagged^{"default":{"harness":"claude"},"default_select":"policy-service","default_policy":"governor-admission"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default_select requires an array default
+default quota-balanced object default is flagged^{"default":{"harness":"claude"},"default_select":"quota-balanced"}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default_select requires an array default
 one-element default array is accepted^{"default":[{"harness":"codex"}]}^empty^
 empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
 array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
@@ -1173,4 +1222,5 @@ test_network_sweeps_recheck_lock_ownership
 test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
+test_crew_dispatch_policy_service_is_verbose_bootstrap_info
 test_crew_dispatch_validation

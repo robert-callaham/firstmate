@@ -176,3 +176,7 @@ It asserts that the script accepts no harness, model, or provider input, never c
 `tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
 `tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake `quota-axi --json` snapshot per case.
 It covers the Claude 1 percent versus Codex 55 percent reserve regression, explicit accounting for unmeasurable runway, and the strongest-reasoning constraint.
+`tests/fm-policy-service-dispatch-live-e2e.test.sh` owns the agent side of the `policy-service` selector.
+It loads the repository's own `AGENTS.md` as the lab home's context file and drives it through the same Pi interface against a recording `policy-axi` and a fake local policy skill thinned to that command convention alone, so the delegation rules under test can only come from the contract.
+It asserts that the complete configured array and the one shared `quota-axi --json` snapshot both reach the named policy unchanged with no preselection, that the policy's own concrete profile wins even when it is the last array entry, that an explicit no-route stops the intake instead of falling back to a candidate or `config/crew-harness`, and that a rule with no selector still resolves through `quota-array-dispatch` without reaching a policy service.
+`tests/fm-bootstrap.test.sh` also owns the per-home `CREW_DISPATCH` diagnostic for a policy owner whose skill this home cannot load, and `tests/fm-secondmate-harness.test.sh` owns propagation of those named policy skills into a secondmate home.
