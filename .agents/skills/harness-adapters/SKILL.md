@@ -178,9 +178,12 @@ The shared symptom is a healthy-looking pane with no work in progress, so each a
 | Interrupt | single Escape |
 | Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
 
-First launch in a fresh worktree, or first ever on a machine, may show a trust or bypass-permissions confirmation.
-After every spawn, peek the pane within about 20 seconds.
-If such a dialog is showing, accept it from an active firstmate session using `FM_HOME=<this-firstmate-home> bin/fm-send.sh <window> --key Enter`, or the choice the dialog requires, unless `FM_HOME` is already set to the active firstmate home; verify the brief started processing.
+First launch in a fresh worktree, or first ever on a machine, may show two confirmations in sequence.
+The folder-trust prompt preselects `1. Yes, I trust this folder`, so a plain Enter accepts it.
+The bypass-permissions prompt that can follow preselects `No, exit`, so a blind Enter at this second dialog kills the worker.
+At the bypass-permissions prompt, send Down, confirm the selection now reads `Yes, I accept`, then send Enter.
+This two-dialog behavior and the destructive second default were verified across four simultaneous spawns on 2026-08-04.
+After every spawn, peek the pane within about 20 seconds, handle each displayed confirmation from an active firstmate session using `FM_HOME=<this-firstmate-home> bin/fm-send.sh <window> --key <key>` unless `FM_HOME` is already set to the active firstmate home, and verify the brief started processing.
 
 Claude renders a predicted-next-prompt suggestion as dim/faint text inside an otherwise-empty composer after a turn completes.
 A plain `tmux capture-pane` cannot tell that ghost text apart from typed text.
