@@ -97,7 +97,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  cp "$(command -v bash)" "$fakebin/muse-bin-test-version"
+  ln -s "$(command -v bash)" "$fakebin/muse-bin-test-version"
   cat > "$fakebin/muse" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -161,27 +161,95 @@ run_muse_spawn() {  # <home> <proj> <wt> <fakebin> <id> [extra args...]
 # lets the shell exec the probe in place, which REPLACES the muse-bin-* process
 # name the walk is supposed to find. Real muse keeps its TUI process alive and
 # runs tools as children, so forcing a fork is what reproduces that shape.
-test_detects_versioned_process_ancestor() {
-  local dir bin out
-  dir="$TMP_ROOT/detect"
+resolve_installed_muse() {  # <search-path> <home>
+  local PATH=$1 home=$2 candidate
+  candidate=$(command -v muse 2>/dev/null || true)
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  [ -n "$home" ] || return 1
+  for candidate in "$home"/.local/bin/muse-bin-*; do
+    [ -x "$candidate" ] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+assert_versioned_process_ancestor() {  # <detector> <fixture-dir>
+  local detector=$1 dir=$2 bin out bash_bin
+  bash_bin=$(command -v bash) || fail "bash not found for muse ancestry fixtures"
   mkdir -p "$dir"
-  for bin in muse-bin-0.1.0-R708.1 muse-bin-9.9.9-RZZZ.9 muse; do
-    cp "$(command -v bash)" "$dir/$bin"
+  for bin in muse-bin-test-release-a muse-bin-test-release-b muse; do
+    ln -s "$bash_bin" "$dir/$bin"
     out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
-      "$dir/$bin" -c "r=\$(\"$HARNESS\"); printf '%s' \"\$r\"")
+      "$dir/$bin" -c "r=\$(\"$detector\"); printf '%s' \"\$r\"")
     [ "$out" = muse ] || fail "fm-harness.sh under process '$bin' reported '$out', expected muse"
   done
+}
+
+run_versioned_process_ancestor_test() {  # <detector> <fixture-dir> <search-path> <home>
+  local detector=$1 dir=$2 search_path=$3 home=$4
+  if ! resolve_installed_muse "$search_path" "$home" >/dev/null; then
+    echo "skip: muse ancestry detection - muse not installed"
+    return 0
+  fi
+  assert_versioned_process_ancestor "$detector" "$dir"
   pass "muse is detected through any versioned muse-bin ancestor"
+}
+
+test_detects_versioned_process_ancestor() {
+  run_versioned_process_ancestor_test "$HARNESS" "$TMP_ROOT/detect" "$PATH" "${HOME:-}"
+}
+
+# The availability gate has two independent obligations: report an absent Muse
+# explicitly, and stop suppressing failures as soon as any dynamically named
+# muse-bin-<version> installation is available.
+test_muse_ancestry_availability_gate() {
+  local dir empty_path fake_home fake_muse bad_detector out rc
+  dir="$TMP_ROOT/detect-gate"
+  empty_path="$dir/empty-path"
+  fake_home="$dir/home"
+  mkdir -p "$empty_path" "$fake_home/.local/bin"
+
+  out=$(run_versioned_process_ancestor_test \
+    "$HARNESS" "$dir/absent" "$empty_path" "$dir/no-home" 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "an absent optional muse adapter should skip cleanly"
+  [ "$out" = "skip: muse ancestry detection - muse not installed" ] \
+    || fail "the absent-muse skip did not identify the test and reason: '$out'"
+
+  fake_muse="$fake_home/.local/bin/muse-bin-future-auto-update"
+  : > "$fake_muse"
+  chmod +x "$fake_muse"
+  bad_detector="$dir/bad-detector"
+  cat > "$bad_detector" <<'SH'
+#!/usr/bin/env bash
+printf 'unknown\n'
+SH
+  chmod +x "$bad_detector"
+  out=$(run_versioned_process_ancestor_test \
+    "$bad_detector" "$dir/present" "$empty_path" "$fake_home" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "an installed muse let a broken ancestry detector skip or pass"
+  case "$out" in
+    *"reported 'unknown', expected muse"*) ;;
+    *) fail "the installed-muse branch failed for the wrong reason: '$out'" ;;
+  esac
+  pass "muse ancestry availability skips only when muse is absent"
 }
 
 # The match must be anchored: an unrelated command whose name merely CONTAINS
 # muse is a different program and must not be claimed by this adapter.
 test_detection_is_anchored() {
-  local dir bin out
+  local dir bin out bash_bin
   dir="$TMP_ROOT/detect-neg"
+  bash_bin=$(command -v bash) || fail "bash not found for muse ancestry fixtures"
   mkdir -p "$dir"
   for bin in musescore amuse notmuse-bin muse-binary muse-bind; do
-    cp "$(command -v bash)" "$dir/$bin"
+    ln -s "$bash_bin" "$dir/$bin"
     out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
       "$dir/$bin" -c "r=\$(\"$HARNESS\"); printf '%s' \"\$r\"")
     [ "$out" != muse ] || fail "fm-harness.sh misdetected unrelated process '$bin' as muse"
@@ -191,6 +259,10 @@ test_detection_is_anchored() {
 
 test_spawn_clears_inherited_foreign_harness_markers() {
   local rec case_dir home proj wt fakebin id result out status
+  if ! resolve_installed_muse "$PATH" "${HOME:-}" >/dev/null; then
+    echo "skip: muse spawned-worker ancestry detection - muse not installed"
+    return 0
+  fi
   rec=$(make_spawn_case inherited-markers)
   IFS='|' read -r case_dir home proj wt fakebin id <<EOF
 $rec
@@ -894,8 +966,9 @@ test_muse_trusts_no_record_sources() {
   pass "muse trusts no busy record source"
 }
 
-test_detects_versioned_process_ancestor
+test_muse_ancestry_availability_gate
 test_detection_is_anchored
+test_detects_versioned_process_ancestor
 test_spawn_clears_inherited_foreign_harness_markers
 test_spawn_launch_shape
 test_spawn_maps_effort_and_model
