@@ -162,6 +162,11 @@ run_muse_spawn() {  # <home> <proj> <wt> <fakebin> <id> [extra args...]
 # name the walk is supposed to find. Real muse keeps its TUI process alive and
 # runs tools as children, so forcing a fork is what reproduces that shape.
 #
+# Every renamed executable below is a SYMLINK to bash, never a copy: macOS kills
+# a copy of the Apple-signed system bash on exec, so a `cp` fixture would never
+# reach the probe. Each link is checked, because a fixture that was not created
+# would leave the loop asserting against whatever already sits at that path.
+#
 # Only ONE check here needs Muse Code on the machine, so only that one is gated:
 #   gated   test_detects_installed_muse_binary_name - it must read the live
 #           installation's name, which does not exist when muse is absent.
@@ -220,7 +225,8 @@ assert_versioned_process_ancestor() {  # <detector> <fixture-dir> <process-name>
   bash_bin=$(command -v bash) || fail "bash not found for muse ancestry fixtures"
   mkdir -p "$dir"
   for bin in "$@"; do
-    ln -s "$bash_bin" "$dir/$bin"
+    ln -s "$bash_bin" "$dir/$bin" \
+      || fail "could not create the muse ancestry fixture for process '$bin'"
     out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
       "$dir/$bin" -c "r=\$(\"$detector\"); printf '%s' \"\$r\"")
     [ "$out" = muse ] || fail "fm-harness.sh under process '$bin' reported '$out', expected muse"
@@ -325,7 +331,8 @@ test_detection_is_anchored() {
   bash_bin=$(command -v bash) || fail "bash not found for muse ancestry fixtures"
   mkdir -p "$dir"
   for bin in musescore amuse notmuse-bin muse-binary muse-bind; do
-    ln -s "$bash_bin" "$dir/$bin"
+    ln -s "$bash_bin" "$dir/$bin" \
+      || fail "could not create the muse ancestry fixture for process '$bin'"
     out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
       "$dir/$bin" -c "r=\$(\"$HARNESS\"); printf '%s' \"\$r\"")
     [ "$out" != muse ] || fail "fm-harness.sh misdetected unrelated process '$bin' as muse"
