@@ -167,8 +167,10 @@ status_is_paused_or_captain_held() {  # <status-line>
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
 # Only the pre-colon position is a key: "needs-decision: [key=api-shape] ..."
 # is note prose, so that line stays under "default". The grammar stays strict
-# rather than widening to a second accepted form, and bin/fm-brief.sh generates
-# the worker-facing reinforcement of this placement into every brief shape.
+# rather than widening to a second accepted form. This header owns the parse
+# contract; bin/fm-brief.sh owns the worker-facing teaching of it and generates
+# that single reinforcement into every brief shape, so instructional surfaces
+# point at that generator rather than paraphrasing this header.
 # <slug> is exactly A-Za-z0-9._- (an empty or out-of-charset slug is not a
 # decision transition at all: the fold below ignores that line entirely, so it
 # opens nothing, not even under "default").

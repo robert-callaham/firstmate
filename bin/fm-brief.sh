@@ -51,8 +51,12 @@
 # blocked when firstmate must act.
 # Every scaffold also carries one shared reinforcement of the keyed decision and
 # blocker grammar and its key-exact closure rule, so no brief shape can teach a
-# form the parser does not accept; bin/fm-classify-lib.sh owns that grammar and
-# this script only restates it for workers.
+# form the parser does not accept. bin/fm-classify-lib.sh owns the parse contract
+# those rules describe; the worker-facing wording of it is owned HERE and is the
+# only taught copy in the repository. Any other surface that needs a worker to
+# report status points at this generator instead of restating the verbs, the
+# declared-pause distinction, or the key placement in its own words, because a
+# hand-written second copy is exactly how unkeyed decisions reached "default".
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
