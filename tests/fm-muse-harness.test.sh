@@ -161,6 +161,15 @@ run_muse_spawn() {  # <home> <proj> <wt> <fakebin> <id> [extra args...]
 # lets the shell exec the probe in place, which REPLACES the muse-bin-* process
 # name the walk is supposed to find. Real muse keeps its TUI process alive and
 # runs tools as children, so forcing a fork is what reproduces that shape.
+#
+# Only ONE check here needs Muse Code on the machine, so only that one is gated:
+#   gated   test_detects_installed_muse_binary_name - it must read the live
+#           installation's name, which does not exist when muse is absent.
+#   ungated test_detects_versioned_process_ancestor - fixture-only; it names its
+#           own muse-bin-* processes, so it proves the pattern with no muse.
+#   ungated test_detection_is_anchored - fixture-only negative cases.
+#   ungated test_spawn_clears_inherited_foreign_harness_markers - the spawn
+#           fakebin supplies its own muse launcher and versioned binary.
 resolve_installed_muse() {  # <search-path> <home>
   local PATH=$1 home=$2 candidate
   candidate=$(command -v muse 2>/dev/null || true)
@@ -177,11 +186,12 @@ resolve_installed_muse() {  # <search-path> <home>
   return 1
 }
 
-assert_versioned_process_ancestor() {  # <detector> <fixture-dir>
+assert_versioned_process_ancestor() {  # <detector> <fixture-dir> <process-name>...
   local detector=$1 dir=$2 bin out bash_bin
+  shift 2
   bash_bin=$(command -v bash) || fail "bash not found for muse ancestry fixtures"
   mkdir -p "$dir"
-  for bin in muse-bin-test-release-a muse-bin-test-release-b muse; do
+  for bin in "$@"; do
     ln -s "$bash_bin" "$dir/$bin"
     out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
       "$dir/$bin" -c "r=\$(\"$detector\"); printf '%s' \"\$r\"")
@@ -189,18 +199,29 @@ assert_versioned_process_ancestor() {  # <detector> <fixture-dir>
   done
 }
 
-run_versioned_process_ancestor_test() {  # <detector> <fixture-dir> <search-path> <home>
-  local detector=$1 dir=$2 search_path=$3 home=$4
-  if ! resolve_installed_muse "$search_path" "$home" >/dev/null; then
-    echo "skip: muse ancestry detection - muse not installed"
-    return 0
-  fi
-  assert_versioned_process_ancestor "$detector" "$dir"
+# Ungated: the fixture names its own muse-bin-* processes, so this proves the
+# prefix match on a machine that has never had Muse Code installed.
+test_detects_versioned_process_ancestor() {
+  assert_versioned_process_ancestor "$HARNESS" "$TMP_ROOT/detect" \
+    muse-bin-test-release-a muse-bin-test-release-b muse
   pass "muse is detected through any versioned muse-bin ancestor"
 }
 
-test_detects_versioned_process_ancestor() {
-  run_versioned_process_ancestor_test "$HARNESS" "$TMP_ROOT/detect" "$PATH" "${HOME:-}"
+# Gated: muse's live binary version changes on auto-update, so the only way to
+# know the CURRENT installed name is to read the installation. Absent one, there
+# is no name to check and the case skips instead of pretending it verified.
+run_installed_muse_name_test() {  # <detector> <fixture-dir> <search-path> <home>
+  local detector=$1 dir=$2 search_path=$3 home=$4 installed
+  if ! installed=$(resolve_installed_muse "$search_path" "$home"); then
+    echo "skip: muse installed-binary ancestry detection - muse not installed"
+    return 0
+  fi
+  assert_versioned_process_ancestor "$detector" "$dir" "$(basename -- "$installed")"
+  pass "muse detection claims the installed muse binary's current name"
+}
+
+test_detects_installed_muse_binary_name() {
+  run_installed_muse_name_test "$HARNESS" "$TMP_ROOT/detect-installed" "$PATH" "${HOME:-}"
 }
 
 # The availability gate has two independent obligations: report an absent Muse
@@ -213,11 +234,11 @@ test_muse_ancestry_availability_gate() {
   fake_home="$dir/home"
   mkdir -p "$empty_path" "$fake_home/.local/bin"
 
-  out=$(run_versioned_process_ancestor_test \
+  out=$(run_installed_muse_name_test \
     "$HARNESS" "$dir/absent" "$empty_path" "$dir/no-home" 2>&1)
   rc=$?
   expect_code 0 "$rc" "an absent optional muse adapter should skip cleanly"
-  [ "$out" = "skip: muse ancestry detection - muse not installed" ] \
+  [ "$out" = "skip: muse installed-binary ancestry detection - muse not installed" ] \
     || fail "the absent-muse skip did not identify the test and reason: '$out'"
 
   fake_muse="$fake_home/.local/bin/muse-bin-future-auto-update"
@@ -229,7 +250,7 @@ test_muse_ancestry_availability_gate() {
 printf 'unknown\n'
 SH
   chmod +x "$bad_detector"
-  out=$(run_versioned_process_ancestor_test \
+  out=$(run_installed_muse_name_test \
     "$bad_detector" "$dir/present" "$empty_path" "$fake_home" 2>&1)
   rc=$?
   [ "$rc" -ne 0 ] \
@@ -259,10 +280,6 @@ test_detection_is_anchored() {
 
 test_spawn_clears_inherited_foreign_harness_markers() {
   local rec case_dir home proj wt fakebin id result out status
-  if ! resolve_installed_muse "$PATH" "${HOME:-}" >/dev/null; then
-    echo "skip: muse spawned-worker ancestry detection - muse not installed"
-    return 0
-  fi
   rec=$(make_spawn_case inherited-markers)
   IFS='|' read -r case_dir home proj wt fakebin id <<EOF
 $rec
@@ -969,6 +986,7 @@ test_muse_trusts_no_record_sources() {
 test_muse_ancestry_availability_gate
 test_detection_is_anchored
 test_detects_versioned_process_ancestor
+test_detects_installed_muse_binary_name
 test_spawn_clears_inherited_foreign_harness_markers
 test_spawn_launch_shape
 test_spawn_maps_effort_and_model
