@@ -2520,6 +2520,7 @@ SH
 
 test_returned_custom_check_descendants_are_drained() {
   local backend dir state fakebin ready direct_done child_pid_file sentinel watcher_pid child_pid i rc alive force_fallback
+  local stop_overdue stop_watchdog
   for backend in installed-timeout fallback-timeout; do
     dir=$(make_case "returned-custom-descendant-$backend")
     state="$dir/home/state"
@@ -2572,20 +2573,32 @@ SH
       && [ -e "$state/.last-check" ] \
       || fail "$backend watcher did not complete the direct custom check"
     child_pid=$(cat "$child_pid_file")
+    stop_overdue="$dir/stop-overdue"
     kill -TERM "$watcher_pid" 2>/dev/null || fail "could not stop $backend watcher"
-    i=0
-    while kill -0 "$watcher_pid" 2>/dev/null && [ "$i" -lt 150 ]; do
-      sleep 0.02
-      i=$((i + 1))
-    done
-    if kill -0 "$watcher_pid" 2>/dev/null; then
-      kill -KILL "$watcher_pid" 2>/dev/null || true
-      wait "$watcher_pid" 2>/dev/null || true
+    # The claim under test is that the signaled watcher STOPS, not that it stops
+    # inside some particular number of scheduler slices. Polling `kill -0` for a
+    # fixed count of 0.02s naps measured runner load instead: a busy CI host
+    # exhausted the budget while the watcher was still shutting down, so this
+    # reported a drain regression that never happened. Block on the child
+    # directly - the exit is observed the moment it happens, at any load - and
+    # keep a far-outside watchdog whose marker is the only thing that can call
+    # this a failure to stop, so a genuine hang is still caught and named.
+    ( i=0
+      while [ "$i" -lt 600 ]; do
+        sleep 0.1
+        i=$((i + 1))
+      done
+      : > "$stop_overdue"
+      kill -KILL "$watcher_pid" 2>/dev/null || true ) &
+    stop_watchdog=$!
+    rc=0
+    wait "$watcher_pid" || rc=$?
+    kill -TERM "$stop_watchdog" 2>/dev/null || true
+    wait "$stop_watchdog" 2>/dev/null || true
+    if [ -e "$stop_overdue" ]; then
       kill -KILL "$child_pid" 2>/dev/null || true
       fail "$backend watcher did not stop after the direct check returned"
     fi
-    rc=0
-    wait "$watcher_pid" || rc=$?
     [ "$rc" -ne 0 ] || fail "$backend signaled watcher exited successfully"
     alive=0
     kill -0 "$child_pid" 2>/dev/null && alive=1
