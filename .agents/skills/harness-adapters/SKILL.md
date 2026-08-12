@@ -394,7 +394,8 @@ The delivery-only spinner match covers the full moon-phase glyph set rather than
 [`docs/turnend-guard.md`](../../../docs/turnend-guard.md) owns Kimi's verified global hook surface and captain-approved crew wake integration.
 `fm-spawn.sh` installs one marker-delimited Firstmate entry in `$HOME/.kimi-code/config.toml`, one silent always-zero hook script, and one private token registry under `$HOME/.kimi-code/fm-turn-end.d/`.
 Each Kimi crew worktree receives a gitignored `.fm-kimi-turnend` token pointer, and the global hook touches that task's `state/<id>.turn-ended` only when the Stop payload's `cwd`, pointer, and registry entry all agree.
-A guarded silent hook cannot be verified from absence of effect, so prove invocation with an unguarded probe before concluding that the hook did not fire.
+A guarded silent hook cannot be verified from absence of effect, so never conclude from a missing `state/<id>.turn-ended` that the hook did not fire.
+Apply [`bin/fm-brief.sh`](../../../bin/fm-brief.sh)'s generated `GUARD_SELF_REPORTING_RULE` contract to this silent hook; its positive control is an unguarded invocation probe.
 The guarded turn-end signal remains a wake notification; standalone Kimi has no busy-state source until one is live-verified.
 
 ## muse (VERIFIED 2026-08-05, Muse Code 0.1.0-R708.1, build sha 427a430436)

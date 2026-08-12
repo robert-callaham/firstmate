@@ -57,6 +57,11 @@
 # report status points at this generator instead of restating the verbs, the
 # declared-pause distinction, or the key placement in its own words, because a
 # hand-written second copy is exactly how unkeyed decisions reached "default".
+# Every scaffold carries one compact guard self-reporting contract immediately
+# after its task or routing scope, where the worker sees it before setup
+# boilerplate. The worker-facing wording is owned HERE in
+# GUARD_SELF_REPORTING_RULE. Any other tracked surface that needs the contract
+# points at that block instead of paraphrasing it.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
@@ -206,6 +211,15 @@ EOF
 DECISION_CLOSURE_RULE=${DECISION_CLOSURE_RULE%$'\n'}
 DECISION_CLOSURE_RULE_NUMBERED=${DECISION_CLOSURE_RULE//$'\n'/$'\n   '}
 
+IFS= read -r -d '' GUARD_SELF_REPORTING_RULE <<'EOF' || true
+# Guard self-reporting
+A guard must be able to report its own absence.
+If you add or change a guard, prove it blocks a real negative control with a test that fails when the guard is removed.
+Treat a pattern that matches zero targets as a failure, never a silent pass.
+Report `could not verify` as a distinct outcome from `verified fine`.
+EOF
+GUARD_SELF_REPORTING_RULE=${GUARD_SELF_REPORTING_RULE%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -235,6 +249,8 @@ $SECONDMATE_CHARTER
 
 # Routing scope
 $SECONDMATE_SCOPE
+
+$GUARD_SELF_REPORTING_RULE
 
 # Project clones
 $PROJECT_CLONES_BODY
@@ -335,6 +351,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 # Task
 {TASK}
+
+$GUARD_SELF_REPORTING_RULE
 
 $HERDR_SECTION
 
@@ -445,6 +463,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 
 # Task
 {TASK}
+
+$GUARD_SELF_REPORTING_RULE
 
 $HERDR_SECTION
 

@@ -717,6 +717,38 @@ test_decision_key_grammar_renders_in_all_brief_scaffolds() {
   pass "fm-brief.sh: every scaffold pins the parser-owned decision-key grammar"
 }
 
+test_guard_self_reporting_rule_renders_in_all_brief_scaffolds() {
+  local home kind id brief
+  home="$TMP_ROOT/guard-self-reporting-home"
+  mkdir -p "$home/data"
+
+  for kind in no-mistakes direct-PR local-only scout secondmate; do
+    id="brief-guard-self-reporting-$kind"
+    case "$kind" in
+      no-mistakes|direct-PR|local-only)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode "$kind" >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+      secondmate)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Guard self-reporting" "$brief" \
+      "$kind brief did not make the guard self-reporting contract visible"
+    assert_grep "a test that fails when the guard is removed" "$brief" \
+      "$kind brief did not require a removal-sensitive negative control"
+    assert_grep "a pattern that matches zero targets as a failure" "$brief" \
+      "$kind brief allowed zero-target patterns to pass silently"
+    # shellcheck disable=SC2016 # Literal outcome labels must remain unexpanded.
+    assert_grep 'Report `could not verify` as a distinct outcome from `verified fine`.' "$brief" \
+      "$kind brief collapsed an unverifiable result into a verified result"
+  done
+  pass "fm-brief.sh: every scaffold carries the guard self-reporting contract"
+}
+
 test_scout_and_secondmate_load_decision_hold_policy() {
   local home scout charter
   home="$TMP_ROOT/decision-policy-home"
@@ -775,5 +807,6 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_decision_key_grammar_renders_in_all_brief_scaffolds
+test_guard_self_reporting_rule_renders_in_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
