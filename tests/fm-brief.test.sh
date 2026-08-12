@@ -702,6 +702,17 @@ test_decision_key_grammar_renders_in_all_brief_scaffolds() {
     # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
     assert_grep 'that form is unkeyed and registers under `default`' "$brief" \
       "$kind brief did not explain the post-colon form's parser behavior"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'Keep `<slug>` to lowercase letters, digits, and hyphens' "$brief" \
+      "$kind brief did not teach the conservative key slug charset"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'the parser accepts exactly `A-Za-z0-9._-`' "$brief" \
+      "$kind brief did not state the parser's actual accepted key charset"
+    assert_grep 'discard the whole line, so no decision opens at all' "$brief" \
+      "$kind brief did not warn that an out-of-charset slug opens no decision"
+    # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
+    assert_no_grep 'needs-decision: {summary of options}' "$brief" \
+      "$kind brief still instructs the unkeyed needs-decision form"
   done
   pass "fm-brief.sh: every scaffold pins the parser-owned decision-key grammar"
 }

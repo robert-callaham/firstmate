@@ -178,16 +178,25 @@ shell_quote() {
 
 STATUS_FILE=$(shell_quote "$STATE/$ID.status")
 
-# bin/fm-classify-lib.sh owns the decision-key grammar. Keep this one generated
-# reinforcement shared by every brief shape so the parser and worker guidance
-# cannot drift independently by task kind.
+# bin/fm-classify-lib.sh owns the decision-key grammar. Keep these generated
+# reinforcements shared by every brief shape that carries them so the parser and
+# worker guidance cannot drift independently by task kind.
 IFS= read -r -d '' DECISION_KEY_RULE <<'EOF' || true
 Keyed decisions and blockers use the parser-owned grammar `<state> [key=<slug>]: <summary>`; the `[key=...]` token must sit before the colon.
 Write `needs-decision [key=api-shape]: choose REST or RPC` or `blocked [key=credentials]: deploy token missing`.
 Never write `needs-decision: [key=api-shape] ...`; that form is unkeyed and registers under `default`.
+Keep `<slug>` to lowercase letters, digits, and hyphens like `api-shape`: the parser accepts exactly `A-Za-z0-9._-`, and a slug carrying any other character - a space above all - makes it discard the whole line, so no decision opens at all, not even under `default`.
 EOF
 DECISION_KEY_RULE=${DECISION_KEY_RULE%$'\n'}
 DECISION_KEY_RULE_NUMBERED=${DECISION_KEY_RULE//$'\n'/$'\n   '}
+
+IFS= read -r -d '' DECISION_CLOSURE_RULE <<'EOF' || true
+A decision or blocker you opened stays open until a `resolved` line carrying its exact key lands; a later `done:` or `working:` line never closes it, even when the answer is what started that work.
+Firstmate's reply normally writes that closing line at answer time; when a keyed blocker or wait clears WITHOUT a firstmate reply, append `resolved [key=<slug>]: {how it cleared}` yourself using its exact key as you resume.
+A bare unkeyed event under `default` is the only case that closes with bare `resolved: {how it cleared}`.
+EOF
+DECISION_CLOSURE_RULE=${DECISION_CLOSURE_RULE%$'\n'}
+DECISION_CLOSURE_RULE_NUMBERED=${DECISION_CLOSURE_RULE//$'\n'/$'\n   '}
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -345,9 +354,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 6. $DECISION_KEY_RULE_NUMBERED
    If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision [key=<decision-slug>]: {summary of options}\` and stop. Firstmate will reply with the decision.
-   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a keyed blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself using its exact key as you resume.
-   A bare unkeyed event under \`default\` is the only case that closes with bare \`resolved: {how it cleared}\`.
+   $DECISION_CLOSURE_RULE_NUMBERED
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
@@ -463,9 +470,7 @@ $RULE1
 6. $DECISION_KEY_RULE_NUMBERED
    If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
    append \`needs-decision [key=<decision-slug>]: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
-   A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
-   Firstmate's reply normally writes that closing line at answer time; when a keyed blocker or wait clears WITHOUT a firstmate reply, append \`resolved [key=<slug>]: {how it cleared}\` yourself using its exact key as you resume.
-   A bare unkeyed event under \`default\` is the only case that closes with bare \`resolved: {how it cleared}\`.
+   $DECISION_CLOSURE_RULE_NUMBERED
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
