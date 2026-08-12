@@ -49,6 +49,10 @@
 # declared-external-wait verb (FM_CLASSIFY_PAUSED_VERB, default "paused") from
 # "blocked:": pause for a known external wait expected to clear on its own,
 # blocked when firstmate must act.
+# Every scaffold also carries one shared reinforcement of the keyed decision and
+# blocker grammar and its key-exact closure rule, so no brief shape can teach a
+# form the parser does not accept; bin/fm-classify-lib.sh owns that grammar and
+# this script only restates it for workers.
 # Ship tasks include a project-memory section so durable project-intrinsic
 # learnings can be committed to AGENTS.md through the project's delivery path;
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
