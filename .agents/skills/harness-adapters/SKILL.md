@@ -178,9 +178,15 @@ The shared symptom is a healthy-looking pane with no work in progress, so each a
 | Interrupt | single Escape |
 | Skill invocation | `/<skill>` (e.g. `/no-mistakes`) |
 
-First launch in a fresh worktree, or first ever on a machine, may show a trust or bypass-permissions confirmation.
+First launch in a fresh worktree, or first ever on a machine, may show two confirmations in sequence.
+The folder-trust prompt preselects `1. Yes, I trust this folder`, so a plain Enter accepts it.
+The bypass-permissions prompt that can follow preselects `No, exit`, so a blind Enter at this second dialog kills the worker.
+At the bypass-permissions prompt, send Down, confirm the selection now reads `Yes, I accept`, then send Enter.
+That Down step is verified on the tmux backend only; on any other backend, check that backend's own key support in `bin/backends/<backend>.sh` before relying on it, because each adapter maps firstmate's key vocabulary onto its own names there, and `Down` is outside the four control-plane keys whose per-backend delivery `bin/fm-control-lib.sh` records.
+Re-peeking to confirm the selection reads `Yes, I accept` is mandatory before ever sending Enter at this dialog, because the default here is destructive.
+This two-dialog behavior and the destructive second default were verified across four simultaneous spawns on 2026-08-04.
 After every spawn, peek the pane within about 20 seconds.
-If such a dialog is showing, accept it from an active firstmate session using `FM_HOME=<this-firstmate-home> bin/fm-send.sh <window> --key Enter`, or the choice the dialog requires, unless `FM_HOME` is already set to the active firstmate home; verify the brief started processing.
+Handle each displayed confirmation from an active firstmate session using `FM_HOME=<this-firstmate-home> bin/fm-send.sh <window> --key <key>` unless `FM_HOME` is already set to the active firstmate home, then verify the brief started processing.
 
 Claude renders a predicted-next-prompt suggestion as dim/faint text inside an otherwise-empty composer after a turn completes.
 A plain `tmux capture-pane` cannot tell that ghost text apart from typed text.
