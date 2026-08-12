@@ -165,6 +165,15 @@ status_is_paused_or_captain_held() {  # <status-line>
 #   resolved       [key=api-shape]: <how it was decided>
 # A line with no token uses the key "default", preserving the historical
 # one-open-decision-per-task behavior (a bare "resolved:" closes "default").
+# Only the pre-colon position is a key: "needs-decision: [key=api-shape] ..."
+# is note prose, so that line stays under "default". The grammar stays strict
+# rather than widening to a second accepted form. This header owns the parse
+# contract; bin/fm-brief.sh owns the worker-facing teaching of it and generates
+# that single reinforcement into every brief shape, so instructional surfaces
+# point at that generator rather than paraphrasing this header.
+# <slug> is exactly A-Za-z0-9._- (an empty or out-of-charset slug is not a
+# decision transition at all: the fold below ignores that line entirely, so it
+# opens nothing, not even under "default").
 # The three parsers are pure reads of a single line; the verb parser strips any
 # key token before the colon so the leading word is recovered cleanly.
 status_line_verb() {  # <status-line> -> leading verb word

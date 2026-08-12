@@ -663,12 +663,58 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
     assert_no_grep '`paused: {why}`' "$brief" \
       "$kind brief still instructs the default paused status"
-    assert_grep 'a blocker or wait clears' "$brief" \
+    assert_grep 'a keyed blocker or wait clears' "$brief" \
       "$kind brief did not require durable resolution when a blocker clears"
     assert_grep 'even when the answer is what started that work' "$brief" \
       "$kind brief did not warn that an answer-started done/working never closes a decision"
   done
   pass "fm-brief.sh: custom pause verb renders in every scaffold"
+}
+
+test_decision_key_grammar_renders_in_all_brief_scaffolds() {
+  local home kind id brief
+  home="$TMP_ROOT/decision-key-grammar-home"
+  mkdir -p "$home/data"
+
+  for kind in ship scout secondmate; do
+    id="brief-decision-key-$kind"
+    case "$kind" in
+      ship)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
+        ;;
+      scout)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
+        ;;
+      secondmate)
+        FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" --secondmate --no-projects >/dev/null 2>&1
+        ;;
+    esac
+    brief="$home/data/$id/brief.md"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'the `[key=...]` token must sit before the colon' "$brief" \
+      "$kind brief did not pin the parser-owned key placement"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep '`needs-decision [key=api-shape]: choose REST or RPC`' "$brief" \
+      "$kind brief did not show the canonical keyed-decision form"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'Never write `needs-decision: [key=api-shape] ...`' "$brief" \
+      "$kind brief did not reject the post-colon key form"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'that form is unkeyed and registers under `default`' "$brief" \
+      "$kind brief did not explain the post-colon form's parser behavior"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'Keep `<slug>` to lowercase letters, digits, and hyphens' "$brief" \
+      "$kind brief did not teach the conservative key slug charset"
+    # shellcheck disable=SC2016 # Literal backticks and key placeholders must remain unexpanded.
+    assert_grep 'the parser accepts exactly `A-Za-z0-9._-`' "$brief" \
+      "$kind brief did not state the parser's actual accepted key charset"
+    assert_grep 'discard the whole line, so no decision opens at all' "$brief" \
+      "$kind brief did not warn that an out-of-charset slug opens no decision"
+    # shellcheck disable=SC2016 # Literal backticks and braces must remain unexpanded.
+    assert_no_grep 'needs-decision: {summary of options}' "$brief" \
+      "$kind brief still instructs the unkeyed needs-decision form"
+  done
+  pass "fm-brief.sh: every scaffold pins the parser-owned decision-key grammar"
 }
 
 test_scout_and_secondmate_load_decision_hold_policy() {
@@ -728,5 +774,6 @@ test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
+test_decision_key_grammar_renders_in_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold

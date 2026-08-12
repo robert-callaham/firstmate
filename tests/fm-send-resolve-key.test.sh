@@ -21,6 +21,10 @@
 #      message crosses the stubbed ssh transport while the close is the same
 #      local ledger append; a failed transport closes nothing.
 #   7. Flag misuse (--key, empty message, explicit backend target) refuses.
+#   8. The deliberately unsupported post-colon key form remains an unkeyed
+#      decision under `default`, rather than defining a second grammar.
+#   9. Key slugs parse over exactly the charset the generated briefs state
+#      (A-Za-z0-9._-); a slug outside it drops its whole line, opening nothing.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -200,6 +204,68 @@ test_not_open_key_refuses_before_send() {
   printf '%s' "$out" | grep -F '[key=real-key]' >/dev/null \
     || fail "the real decision disappeared after a refused answer: $out"
   pass "fm-send --resolve-key: a key that is not open refuses loudly before anything is sent"
+}
+
+test_post_colon_key_remains_unkeyed() {
+  local dir fb log home err rc out
+  dir="$TMP_ROOT/post-colon"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
+  home=$(setup_home post-colon)
+  fm_write_meta "$home/state/post-colon.meta" "window=sess:fm-post-colon" "kind=ship"
+  printf 'needs-decision: [key=api-shape] pick REST or RPC\n' > "$home/state/post-colon.status"
+
+  out=$(drain_out "$home")
+  assert_contains "$out" 'post-colon needs-decision: [key=api-shape] pick REST or RPC' \
+    "the post-colon token unexpectedly became the drain's parsed decision key"
+
+  : > "$log"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" post-colon --resolve-key api-shape "go with REST" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "the unsupported post-colon token unexpectedly opened api-shape"
+  assert_contains "$(cat "$err")" "--resolve-key 'api-shape'" \
+    "the post-colon key refusal did not name the unavailable key"
+  [ ! -s "$log" ] || fail "the refused post-colon key answer still typed text: $(cat "$log")"
+
+  run_send "$fb" "$home" "$log" post-colon --resolve-key default "go with REST"; rc=$?
+  expect_code 0 "$rc" "the post-colon form should remain closable as the historical default decision"
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "resolving the post-colon form under default left it open: $out"
+  fi
+  pass "fm-send: a post-colon key token remains deliberately unkeyed under default"
+}
+
+test_key_slug_charset_matches_the_taught_rule() {
+  local dir fb log home err rc out
+  dir="$TMP_ROOT/slug-charset"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
+  home=$(setup_home slug-charset)
+  fm_write_meta "$home/state/bad-slug.meta" "window=sess:fm-bad-slug" "kind=ship"
+  printf 'needs-decision [key=api shape]: pick REST or RPC\n' > "$home/state/bad-slug.status"
+
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "a slug outside the parser's charset opened a decision instead of dropping the line: $out"
+  fi
+  : > "$log"
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+    "$SEND" bad-slug --resolve-key default "go with REST" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -ne 0 ] || fail "a dropped out-of-charset line left a resolvable default decision"
+
+  fm_write_meta "$home/state/wide-slug.meta" "window=sess:fm-wide-slug" "kind=ship"
+  printf 'needs-decision [key=API_shape.v2]: pick REST or RPC\n' > "$home/state/wide-slug.status"
+  out=$(drain_out "$home")
+  assert_contains "$out" 'wide-slug [key=API_shape.v2] needs-decision: pick REST or RPC' \
+    "the brief states the parser accepts A-Za-z0-9._- , but this slug did not open under its own key"
+  run_send "$fb" "$home" "$log" wide-slug --resolve-key API_shape.v2 "go with REST"; rc=$?
+  expect_code 0 "$rc" "a slug inside the parser's stated charset was not answerable by its exact key"
+  out=$(drain_out "$home")
+  if printf '%s' "$out" | grep -F 'OPEN DECISIONS' >/dev/null; then
+    fail "answering the wide-charset key left it open: $out"
+  fi
+  pass "fm-send: key slugs parse exactly over A-Za-z0-9._- and an out-of-charset slug opens nothing"
 }
 
 test_failed_send_does_not_close() {
@@ -399,6 +465,8 @@ test_answer_send_closes_open_decision
 test_answer_starts_work_never_orphans
 test_routine_steer_never_closes
 test_not_open_key_refuses_before_send
+test_post_colon_key_remains_unkeyed
+test_key_slug_charset_matches_the_taught_rule
 test_failed_send_does_not_close
 test_multiple_keys_close_together
 test_local_secondmate_answer_marked_and_closed
