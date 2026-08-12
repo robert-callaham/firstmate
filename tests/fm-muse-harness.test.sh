@@ -186,9 +186,37 @@ resolve_installed_muse() {  # <search-path> <home>
   return 1
 }
 
+# installed_muse_process_names <search-path> <home>: every process name a real
+# installation can present, one per line - the PATH launcher plus each
+# executable ~/.local/bin/muse-bin-<version> beside it. Muse's real layout ships
+# both, so reading only the launcher would check the constant "muse" and never
+# the version-suffixed name that auto-update rewrites. Availability is still
+# decided PATH-first by resolve_installed_muse, so this fails exactly when muse
+# is absent.
+installed_muse_process_names() {  # <search-path> <home>
+  local PATH=$1 home=$2 launcher candidate name names
+  launcher=$(resolve_installed_muse "$PATH" "$home") || return 1
+  # The search path is localized above, so external tools are out of reach here:
+  # every name is taken with shell expansion rather than basename.
+  names=" ${launcher##*/} "
+  if [ -n "$home" ]; then
+    for candidate in "$home"/.local/bin/muse-bin-*; do
+      [ -x "$candidate" ] || continue
+      name=${candidate##*/}
+      case "$names" in *" $name "*) continue ;; esac
+      names="$names$name "
+    done
+  fi
+  # shellcheck disable=SC2086  # names is a deliberate word-split name list
+  printf '%s\n' $names
+}
+
 assert_versioned_process_ancestor() {  # <detector> <fixture-dir> <process-name>...
   local detector=$1 dir=$2 bin out bash_bin
   shift 2
+  # A name list that matched nothing would run no fixture at all and still let
+  # the caller print its pass line, reporting an unverified check as verified.
+  [ "$#" -gt 0 ] || fail "no muse process names were given to assert ancestry for"
   bash_bin=$(command -v bash) || fail "bash not found for muse ancestry fixtures"
   mkdir -p "$dir"
   for bin in "$@"; do
@@ -208,31 +236,36 @@ test_detects_versioned_process_ancestor() {
 }
 
 # Gated: muse's live binary version changes on auto-update, so the only way to
-# know the CURRENT installed name is to read the installation. Absent one, there
-# is no name to check and the case skips instead of pretending it verified.
+# know the CURRENT installed names is to read the installation. Absent one,
+# there is nothing to check and the case skips instead of pretending it
+# verified.
 run_installed_muse_name_test() {  # <detector> <fixture-dir> <search-path> <home>
-  local detector=$1 dir=$2 search_path=$3 home=$4 installed
-  if ! installed=$(resolve_installed_muse "$search_path" "$home"); then
+  local detector=$1 dir=$2 search_path=$3 home=$4 names
+  if ! names=$(installed_muse_process_names "$search_path" "$home"); then
     echo "skip: muse installed-binary ancestry detection - muse not installed"
     return 0
   fi
-  assert_versioned_process_ancestor "$detector" "$dir" "$(basename -- "$installed")"
-  pass "muse detection claims the installed muse binary's current name"
+  # shellcheck disable=SC2086  # names is a deliberate word-split arg list
+  assert_versioned_process_ancestor "$detector" "$dir" $names
+  pass "muse detection claims every installed muse process name"
 }
 
 test_detects_installed_muse_binary_name() {
   run_installed_muse_name_test "$HARNESS" "$TMP_ROOT/detect-installed" "$PATH" "${HOME:-}"
 }
 
-# The availability gate has two independent obligations: report an absent Muse
-# explicitly, and stop suppressing failures as soon as any dynamically named
-# muse-bin-<version> installation is available.
+# The availability gate has three obligations: report an absent Muse explicitly,
+# stop suppressing failures as soon as any dynamically named muse-bin-<version>
+# installation is available, and, on the real layout where a launcher and a
+# versioned binary sit side by side, check BOTH names rather than only the
+# constant launcher.
 test_muse_ancestry_availability_gate() {
-  local dir empty_path fake_home fake_muse bad_detector out rc
+  local dir empty_path fake_home fake_muse launcher_path bad_detector out rc
   dir="$TMP_ROOT/detect-gate"
   empty_path="$dir/empty-path"
   fake_home="$dir/home"
-  mkdir -p "$empty_path" "$fake_home/.local/bin"
+  launcher_path="$dir/launcher-path"
+  mkdir -p "$empty_path" "$launcher_path" "$fake_home/.local/bin"
 
   out=$(run_installed_muse_name_test \
     "$HARNESS" "$dir/absent" "$empty_path" "$dir/no-home" 2>&1)
@@ -258,6 +291,28 @@ SH
   case "$out" in
     *"reported 'unknown', expected muse"*) ;;
     *) fail "the installed-muse branch failed for the wrong reason: '$out'" ;;
+  esac
+
+  # muse's real install puts the launcher on PATH beside the versioned binary.
+  # Reading only the launcher would assert the constant "muse" and never the
+  # auto-updated name, so both must be exercised.
+  : > "$launcher_path/muse"
+  chmod +x "$launcher_path/muse"
+  out=$(run_installed_muse_name_test \
+    "$HARNESS" "$dir/both" "$launcher_path" "$fake_home" 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "a discoverable muse should run the ancestry checks: $out"
+  assert_present "$dir/both/muse" "the installed-name check skipped the PATH launcher"
+  assert_present "$dir/both/muse-bin-future-auto-update" \
+    "the installed-name check skipped the auto-updated versioned binary"
+
+  # A name list that matched nothing must fail loudly, never pass vacuously.
+  out=$(assert_versioned_process_ancestor "$HARNESS" "$dir/empty-names" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "an empty muse name list asserted nothing and passed"
+  case "$out" in
+    *"no muse process names were given"*) ;;
+    *) fail "the empty name list failed for the wrong reason: '$out'" ;;
   esac
   pass "muse ancestry availability skips only when muse is absent"
 }
