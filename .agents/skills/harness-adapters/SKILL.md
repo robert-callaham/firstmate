@@ -182,7 +182,7 @@ First launch in a fresh worktree, or first ever on a machine, may show two confi
 The folder-trust prompt preselects `1. Yes, I trust this folder`, so a plain Enter accepts it.
 The bypass-permissions prompt that can follow preselects `No, exit`, so a blind Enter at this second dialog kills the worker.
 At the bypass-permissions prompt, send Down, confirm the selection now reads `Yes, I accept`, then send Enter.
-That Down step is verified on the tmux backend only; on any other backend, check that backend's own key support in `bin/backends/<backend>.sh` before relying on it, because those adapters own the key vocabulary, not this skill.
+That Down step is verified on the tmux backend only; on any other backend, check that backend's own key support in `bin/backends/<backend>.sh` before relying on it, because each adapter maps firstmate's key vocabulary onto its own names there, and `Down` is outside the four control-plane keys whose per-backend delivery `bin/fm-control-lib.sh` records.
 Whether `fm-send --key Down` itself moves the selection is unverified even on tmux: one session saw `fm-send` report success with no visible movement while a direct tmux `send-keys Down` did move it.
 So treat the re-peek confirmation that the selection reads `Yes, I accept` as mandatory before ever sending Enter at this dialog.
 This two-dialog behavior and the destructive second default were verified across four simultaneous spawns on 2026-08-04.
