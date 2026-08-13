@@ -1,3 +1,9 @@
+> **This fork is frozen.** Development no longer happens here, and branches on it may be stale.
+> It is kept only as a base for opening pull requests to the upstream project.
+>
+> For the project itself — issues, discussion, releases — go to
+> **[kunchenguid/firstmate](https://github.com/kunchenguid/firstmate)**.
+
 <h1 align="center">firstmate</h1>
 <p align="center">
   <a
