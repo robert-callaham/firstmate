@@ -64,16 +64,38 @@ mkdir -p \
 # context, and the delegation cases could still pass on improvisation from
 # crew-dispatch.json alone, so the probe proves loading directly rather than
 # leaving that failure silent.
-MARKER="fm-policy-service-$(basename "$LAB")"
+# The marker shares no substring with the contract vocabulary the negative
+# control strips, so appending it can never reintroduce the cue that control
+# removes.
+MARKER="lab-load-$$"
+SENTINEL_START='policy-service-delegation:start'
+SENTINEL_END='policy-service-delegation:end'
+
+# Removes exactly the sentinel-delimited delegation region from the lab copy and
+# proves the rest of the contract survives byte for byte. The sentinels live in
+# the repository AGENTS.md and are load-bearing for this test.
+strip_delegation_paragraph() {
+  local start end
+  [ "$(grep -c "$SENTINEL_START" "$CONTRACT")" = 1 ] \
+    || fail "negative control: AGENTS.md needs exactly one $SENTINEL_START sentinel"
+  [ "$(grep -c "$SENTINEL_END" "$CONTRACT")" = 1 ] \
+    || fail "negative control: AGENTS.md needs exactly one $SENTINEL_END sentinel"
+  start=$(grep -n "$SENTINEL_START" "$CONTRACT" | cut -d: -f1)
+  end=$(grep -n "$SENTINEL_END" "$CONTRACT" | cut -d: -f1)
+  [ "$start" -lt "$end" ] \
+    || fail "negative control: the delegation sentinels are out of order in AGENTS.md"
+  sed -n "1,$((start - 1))p" "$CONTRACT" > "$HOME_DIR/AGENTS.md"
+  sed -n "$((end + 1)),\$p" "$CONTRACT" >> "$HOME_DIR/AGENTS.md"
+  [ "$(diff "$CONTRACT" "$HOME_DIR/AGENTS.md" | grep '^[0-9]')" = "${start},${end}d$((start - 1))" ] \
+    || fail "negative control: the diff is not the single deletion of lines ${start} to ${end}"
+  [ "$(diff "$CONTRACT" "$HOME_DIR/AGENTS.md" | grep -cv '^[0-9<]')" = 0 ] \
+    || fail "negative control: stripping added or altered content outside the delimited region"
+}
 
 install_contract() {
   case "${1:-full}" in
-    strip-policy-service)
-      grep -v 'policy-service' "$CONTRACT" > "$HOME_DIR/AGENTS.md"
-      ! grep -q 'policy-service' "$HOME_DIR/AGENTS.md" \
-        || fail "negative control: the lab contract still names policy-service"
-      ! cmp -s "$CONTRACT" "$HOME_DIR/AGENTS.md" \
-        || fail "negative control: stripping removed nothing, so it proves nothing"
+    strip-delegation)
+      strip_delegation_paragraph
       ;;
     *)
       cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
@@ -303,21 +325,28 @@ echo "ok - a rule with no selector still resolves through quota-array-dispatch a
 
 # --- Negative control: the delegation behavior comes from the contract ---
 #
-# This runs last because it rewrites the lab copy of the contract, stripping
-# every line that names policy-service. The repository contract is never touched.
-# Case 0 proves the lab AGENTS.md reaches model context but not that the
-# policy-service paragraph is what drives cases 1 and 2, so without this control
-# the paragraph could be deleted or reworded into a no-op and the suite would
-# stay green on improvisation from crew-dispatch.json plus the governor-admission
-# skill description.
+# This runs last because it rewrites the lab copy of the contract, removing
+# exactly the sentinel-delimited delegation region and nothing else. The
+# repository contract is never touched. Case 0 proves the lab AGENTS.md reaches
+# model context but not that the delegation paragraph is what drives cases 1 and
+# 2, so without this control the paragraph could be deleted or reworded into a
+# no-op and the suite would stay green on improvisation from crew-dispatch.json
+# plus the governor-admission skill description.
 #
 # This control is inherently probabilistic: the model may reach the policy
 # without the contract telling it to, so an occasional pass is not proof that the
 # contract is doing the work. A persistent pass is the signal to investigate,
 # because it means the earlier cases no longer depend on the paragraph they claim
-# to guard.
+# to guard. The section 2 layout table and the section 13 skill catalog also name
+# policy-service from outside the region, so the control removes the delegation
+# instruction, not every mention of the selector.
 
-install_contract strip-policy-service
+install_contract strip-delegation
+
+! grep -q "$SENTINEL_START" "$HOME_DIR/AGENTS.md" \
+  || fail "negative control: the contract handed to the model still carries the delegation region"
+! grep -q 'delegates the complete array' "$HOME_DIR/AGENTS.md" \
+  || fail "negative control: the contract handed to the model still carries the delegation instruction"
 
 write_dispatch <<'JSON'
 {
@@ -340,9 +369,11 @@ write_verdict 'ROUTE grok/grok-4/high'
 out=$(run_intake "$INTAKE $REPORT_CONTRACT") \
   || fail "negative control: Pi run failed: $out"
 
+printf '%s\n' "$out" | grep -Eq '^DISPATCH=' \
+  || fail "negative control: the intake never reached a dispatch decision, so an absent policy call proves nothing: $out"
 [ ! -s "$POLICY_CALLS" ] \
-  || fail "negative control: the intake still delegated with the policy-service paragraph stripped, so cases 1 and 2 do not depend on the contract they claim to guard: $(cat "$POLICY_CALLS")"
+  || fail "negative control: the intake still delegated with the delegation region stripped, so cases 1 and 2 do not depend on the contract they claim to guard: $(cat "$POLICY_CALLS")"
 printf '%s\n' "$out"
-echo "ok - stripping the policy-service paragraph stops the delegation the earlier cases assert"
+echo "ok - removing the delegation region stops the delegation the earlier cases assert"
 
 echo "# all policy-service dispatch live behavior tests passed"

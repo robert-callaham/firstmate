@@ -183,22 +183,25 @@ When dispatch profiles exist, consult them at every crewmate or scout intake and
 Routing precedence is an explicit per-task captain override, then the best-fit configured rule, then the configured default, then the static crewmate harness.
 Firstmate resolves a matched profile array according to its selector.
 An omitted selector or `select: "quota-balanced"` uses firstmate's built-in procedure: run `quota-axi --json` at that intake, evaluate every configured candidate against that current output, and choose with inspectable effective headroom and usable runway, using pace and reserve only later when needed.
+<!-- policy-service-delegation:start - load-bearing sentinel; tests/fm-policy-service-dispatch-live-e2e.test.sh removes exactly this region as its negative control, so keep both markers wrapping the delegation contract -->
 A `select: "policy-service"` rule delegates the complete array to the local skill named by its required `policy` field; the configured default uses the analogous `default_select` and `default_policy` fields.
 Acquire one shared `quota-axi --json` snapshot exactly once at that intake, hand the policy the complete candidate array in configured order together with that exact snapshot, and accept only its selected concrete profile or its explicit no-route, including a purely economic no-route that carries no contradictory candidate evidence.
 Never preselect a candidate before delegation, silently fall back from no-route, or let array order break a tie.
 A named policy skill this home cannot load is a reportable blocker, never a reason to select locally or fall back.
+Firstmate holds none of the `quota-balanced` selection evidence under this selector and owes instead the matched rule, the policy it delegated to, the complete candidate array it handed over, the shared snapshot it handed with it, and that policy's verbatim answer; never reinterpret, re-rank, restate, second-guess, or override that answer with its own selection.
+A reasoning-class concern about the policy's answer is reported to the captain, never resolved by substituting a different profile.
+Load the rule's named policy skill rather than `quota-array-dispatch`; it owns selection for that intake.
+<!-- policy-service-delegation:end -->
 Under `quota-balanced`, account for every candidate with the catalog evidence, provider relationship, applicable quota and authentication facts, remaining uncertainty, fit and reasoning class, and the headroom, runway, and later pace or reserve evidence used in selection; never omit a candidate, guess, fall back silently, or call the result quota-informed without them.
-Under `policy-service`, account instead for the array you handed over, the shared snapshot you handed with it, and the policy's exact concrete route or no-route answer; never reinterpret, re-rank, restate, second-guess, or override that answer as your own selection evidence.
 Establish model support and provider family from that harness's own authoritative catalog, then read `quota-axi` at the granularity the vendor actually supplies: provider-level or all-model evidence applies to every model established in that family, and a named-model window bounds only that model.
 Missing model-level quota, a missing authentication source, unmeasurable headroom, or unmodeled authentication is disclosed uncertainty that keeps a candidate eligible, never a credential or login escalation.
 Under `quota-balanced`, only concrete contradictory evidence blocks a candidate, such as an authoritative catalog proving the model unsupported or proof that the credential selected for that surface is unusable.
 Under every selector, never infer a credential store, provider family, or quota mapping from a harness, model, or source name, and never launch another harness's CLI to judge a candidate.
 Preserve malformed profile configuration as an actionable error rather than selecting around it.
-Under `quota-balanced`, when every candidate is tight, preserve the captain's strongest-reasoning class rather than silently downgrading it solely to conserve quota; stop and report the tight choice if that class cannot proceed. Under `policy-service`, a reasoning-class concern about the policy's answer is reported to the captain, never resolved by substituting a different profile.
+Under `quota-balanced`, when every candidate is tight, preserve the captain's strongest-reasoning class rather than silently downgrading it solely to conserve quota; stop and report the tight choice if that class cannot proceed.
 Under `quota-balanced`, break genuine evidence ties without array-order or harness bias.
 `quota-axi` owns how model or product windows relate to bounding account windows and remains data-only.
 Load `quota-array-dispatch` before choosing among a matched profile array only for the built-in `quota-balanced` selector; that skill is the single owner of that completion-aware procedure.
-For `policy-service`, load the rule's named policy skill instead; it owns selection for that intake.
 The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use low for well-understood explicit work, xhigh for ambiguous investigation or design, intermediate levels proportionally, and never max without explicit captain preference.
 Do not add model-specific versions of that policy.
 
