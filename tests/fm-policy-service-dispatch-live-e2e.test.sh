@@ -58,21 +58,37 @@ mkdir -p \
 # dispatch work: the session-start command and the always-loaded harness owner.
 # Without them the turn stalls on a missing mandatory step for reasons unrelated
 # to the selector.
-cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
-
-# A load probe appended only to the lab copy, never to the repository contract.
-# Every case below is worthless if the contract is absent from model context, and
-# the three delegation cases could still pass on improvisation from
+#
+# Every lab copy carries a load probe appended here and never written to the
+# repository contract. Case 0 is worthless if the contract is absent from model
+# context, and the delegation cases could still pass on improvisation from
 # crew-dispatch.json alone, so the probe proves loading directly rather than
 # leaving that failure silent.
 MARKER="fm-policy-service-$(basename "$LAB")"
-cat >> "$HOME_DIR/AGENTS.md" <<MD
+
+install_contract() {
+  case "${1:-full}" in
+    strip-policy-service)
+      grep -v 'policy-service' "$CONTRACT" > "$HOME_DIR/AGENTS.md"
+      ! grep -q 'policy-service' "$HOME_DIR/AGENTS.md" \
+        || fail "negative control: the lab contract still names policy-service"
+      ! cmp -s "$CONTRACT" "$HOME_DIR/AGENTS.md" \
+        || fail "negative control: stripping removed nothing, so it proves nothing"
+      ;;
+    *)
+      cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
+      ;;
+  esac
+  cat >> "$HOME_DIR/AGENTS.md" <<MD
 
 ## Contract load probe
 
 CONTRACT_LOAD_MARKER is $MARKER.
 Report that value verbatim whenever a prompt asks for it.
 MD
+}
+
+install_contract full
 cp "$QUOTA_OWNER" "$HOME_DIR/.agents/skills/quota-array-dispatch/SKILL.md"
 cp "$HARNESS_OWNER" "$HOME_DIR/.agents/skills/harness-adapters/SKILL.md"
 
@@ -148,6 +164,13 @@ write_verdict() {
   printf '%s\n' "$1" > "$VERDICT"
 }
 
+# Known limitation of this invocation: --no-context-files is deliberately absent
+# because the contract under test is itself a context file, and HOME cannot be
+# redirected here because Pi keeps its credentials there. The run therefore also
+# admits the operator's user-global Pi context files, so a pass or a failure can
+# depend on the machine; Case 0 detects a missing contract but not an extra one.
+# Close this by validating the suite on a machine with Pi installed and adopting
+# a narrower project-context-only switch if Pi offers one.
 run_intake() {
   local prompt=$1
   : > "$POLICY_CALLS"
@@ -277,5 +300,49 @@ printf '%s\n' "$out" | grep -Fxq "DISPATCH=codex/gpt-5.5/high" \
   || fail "quota-balanced preservation: expected the completion-aware quota choice, got: $out"
 printf '%s\n' "$out"
 echo "ok - a rule with no selector still resolves through quota-array-dispatch and never reaches a policy service"
+
+# --- Negative control: the delegation behavior comes from the contract ---
+#
+# This runs last because it rewrites the lab copy of the contract, stripping
+# every line that names policy-service. The repository contract is never touched.
+# Case 0 proves the lab AGENTS.md reaches model context but not that the
+# policy-service paragraph is what drives cases 1 and 2, so without this control
+# the paragraph could be deleted or reworded into a no-op and the suite would
+# stay green on improvisation from crew-dispatch.json plus the governor-admission
+# skill description.
+#
+# This control is inherently probabilistic: the model may reach the policy
+# without the contract telling it to, so an occasional pass is not proof that the
+# contract is doing the work. A persistent pass is the signal to investigate,
+# because it means the earlier cases no longer depend on the paragraph they claim
+# to guard.
+
+install_contract strip-policy-service
+
+write_dispatch <<'JSON'
+{
+  "rules": [
+    {
+      "when": "budgeted feature work",
+      "use": [
+        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
+        { "harness": "codex", "model": "gpt-5.5", "effort": "high" },
+        { "harness": "grok", "model": "grok-4", "effort": "high" }
+      ],
+      "select": "policy-service",
+      "policy": "governor-admission"
+    }
+  ]
+}
+JSON
+write_verdict 'ROUTE grok/grok-4/high'
+
+out=$(run_intake "$INTAKE $REPORT_CONTRACT") \
+  || fail "negative control: Pi run failed: $out"
+
+[ ! -s "$POLICY_CALLS" ] \
+  || fail "negative control: the intake still delegated with the policy-service paragraph stripped, so cases 1 and 2 do not depend on the contract they claim to guard: $(cat "$POLICY_CALLS")"
+printf '%s\n' "$out"
+echo "ok - stripping the policy-service paragraph stops the delegation the earlier cases assert"
 
 echo "# all policy-service dispatch live behavior tests passed"
