@@ -8,6 +8,8 @@
 # Only the inherited-material allowlist is writable or removable. Writes are
 # atomic ordinary-file replacements. Divergent data/captain-shared.md bytes are
 # quarantined before replacement or removal and its converged copy is read-only.
+# A symlinked destination is refused unless its target is positively confirmed
+# absent, so an operator link into a private tree is never replaced or unlinked.
 set -eu
 
 FM_HOME=${FM_HOME:?FM_HOME is required}
@@ -66,7 +68,17 @@ mkdir -p "$PARENT" || die "cannot create inherited destination parent"
 PARENT_REAL=$(CDPATH='' cd -- "$PARENT" && pwd -P)
 case "$PARENT_REAL" in "$HOME_REAL/config"|"$HOME_REAL/data") ;; *) die "inherited destination escapes FM_HOME" ;; esac
 DEST="$PARENT_REAL/$(basename "$REL")"
-[ ! -L "$DEST" ] || die "inherited destination is a symlink"
+# Same three-way classification as the local propagation path, so one stated
+# inheritance contract holds on both: a live operator link is refused, a link
+# whose target cannot be examined is refused too, and only a confirmed dangling
+# link is replaced or removed below like any other stale artifact.
+if [ -L "$DEST" ]; then
+  case "$(fm_inherit_dest_link_state "$DEST")" in
+    dangling) ;;
+    unknown) die "inherited destination is a symlink whose target could not be examined" ;;
+    *) die "inherited destination is a symlink" ;;
+  esac
+fi
 if [ -e "$DEST" ]; then
   [ -f "$DEST" ] || die "inherited destination is not a regular file"
   [ "$(file_link_count "$DEST")" = 1 ] || die "inherited destination is hardlinked"
@@ -167,7 +179,7 @@ case "$COMMAND" in
     rm -f -- "$EMPTY"
     [ "$EMPTY_HASH" = "$EXPECTED_HASH" ] || die "absent inheritance digest is not the empty payload"
     commit_generation
-    if [ ! -e "$DEST" ]; then
+    if [ ! -e "$DEST" ] && [ ! -L "$DEST" ]; then
       printf 'unchanged: %s\n' "$REL"
       exit 0
     fi

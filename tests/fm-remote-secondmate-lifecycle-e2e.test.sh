@@ -679,6 +679,66 @@ cmp -s "$TMP_ROOT/inherit-complete" "$PROTOCOL_HOME/config/crew-harness" \
   || fail "superseded inheritance replaced the current payload"
 pass "remote inheritance rejects incomplete and superseded payload generations"
 
+# The remote receiver classifies a symlinked destination exactly as the local
+# propagation path does: live and unexaminable are refused with the link left
+# intact, and only a confirmed dangling link is replaced or removed.
+rm -f "$PROTOCOL_HOME/config/crew-harness"
+printf 'operator private\n' > "$TMP_ROOT/inherit-private"
+ln -s "$TMP_ROOT/inherit-private" "$PROTOCOL_HOME/config/crew-harness"
+if FM_HOME="$PROTOCOL_HOME" "$REMOTE_ROOT/bin/fm-remote-inherit.sh" \
+  put config/crew-harness "$inherit_bytes" "$inherit_hash" 3 \
+  < "$TMP_ROOT/inherit-complete" >/dev/null 2>&1; then
+  fail "remote inheritance wrote over a live symlinked destination"
+fi
+[ -L "$PROTOCOL_HOME/config/crew-harness" ] \
+  || fail "remote inheritance unlinked a live symlinked destination"
+[ "$(cat "$TMP_ROOT/inherit-private")" = "operator private" ] \
+  || fail "remote inheritance wrote through a live symlinked destination"
+
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$TMP_ROOT/inherit-unreachable/inner"
+  rm -f "$PROTOCOL_HOME/config/crew-harness"
+  ln -s "$TMP_ROOT/inherit-unreachable/inner/harness" "$PROTOCOL_HOME/config/crew-harness"
+  chmod 000 "$TMP_ROOT/inherit-unreachable"
+  if FM_HOME="$PROTOCOL_HOME" "$REMOTE_ROOT/bin/fm-remote-inherit.sh" \
+    put config/crew-harness "$inherit_bytes" "$inherit_hash" 3 \
+    < "$TMP_ROOT/inherit-complete" >/dev/null 2>&1; then
+    chmod 755 "$TMP_ROOT/inherit-unreachable"
+    fail "remote inheritance wrote over a destination link whose target could not be examined"
+  fi
+  [ -L "$PROTOCOL_HOME/config/crew-harness" ] || {
+    chmod 755 "$TMP_ROOT/inherit-unreachable"
+    fail "remote inheritance unlinked a destination link whose target could not be examined"
+  }
+  chmod 755 "$TMP_ROOT/inherit-unreachable"
+  rm -rf "$TMP_ROOT/inherit-unreachable"
+else
+  echo '# skipped: unreadable-directory classification does not hold as root'
+fi
+
+rm -f "$PROTOCOL_HOME/config/crew-harness"
+ln -s "$TMP_ROOT/inherit-missing-target" "$PROTOCOL_HOME/config/crew-harness"
+FM_HOME="$PROTOCOL_HOME" "$REMOTE_ROOT/bin/fm-remote-inherit.sh" \
+  put config/crew-harness "$inherit_bytes" "$inherit_hash" 3 \
+  < "$TMP_ROOT/inherit-complete" >/dev/null \
+  || fail "remote inheritance refused a dangling symlinked destination"
+[ -L "$PROTOCOL_HOME/config/crew-harness" ] \
+  && fail "remote inheritance kept a dangling symlinked destination"
+cmp -s "$TMP_ROOT/inherit-complete" "$PROTOCOL_HOME/config/crew-harness" \
+  || fail "remote inheritance did not converge over a dangling symlinked destination"
+
+rm -f "$PROTOCOL_HOME/config/crew-harness"
+ln -s "$TMP_ROOT/inherit-missing-target" "$PROTOCOL_HOME/config/crew-harness"
+: > "$TMP_ROOT/inherit-empty"
+inherit_empty_hash=$(sha256_file "$TMP_ROOT/inherit-empty")
+FM_HOME="$PROTOCOL_HOME" "$REMOTE_ROOT/bin/fm-remote-inherit.sh" \
+  absent config/crew-harness 0 "$inherit_empty_hash" 4 >/dev/null \
+  || fail "remote absence mirror refused a dangling symlinked destination"
+[ -L "$PROTOCOL_HOME/config/crew-harness" ] \
+  && fail "remote absence mirror kept a dangling symlinked destination"
+assert_absent "$PROTOCOL_HOME/config/crew-harness" "remote absence mirror left the destination behind"
+pass "remote inheritance preserves live and unexaminable destination links and clears dangling ones"
+
 # Add one local route to prove mixed fleets remain parseable and projected.
 mkdir -p "$LOCAL_HOME/data" "$LOCAL_HOME/state" "$LOCAL_HOME/config" "$LOCAL_HOME/projects" "$LOCAL_HOME/bin"
 printf 'local\n' > "$LOCAL_HOME/.fm-secondmate-home"

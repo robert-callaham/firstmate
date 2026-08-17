@@ -113,6 +113,8 @@ A present primary value always converges byte-exact into validated secondmate ho
 Both halves stop at an operator's symlink: for every declared item, a destination that is a symlink whose target resolves is never replaced, never written through, and never unlinked to mirror absence, because that link belongs to the operator and may point into a private tree kept outside the home.
 Such an item reports a concrete error and leaves the link exactly as it found it; removing the link is the operator's own action and restores convergence on the next run.
 A dangling destination link is not protected, since it guards nothing: it is replaced or removed like any other stale artifact so the item never becomes permanently unconvergeable.
+That applies only on positive confirmation that the link's target is absent, which requires the target's own parent directory to be present and searchable; a link into an unmounted volume, a locked encrypted mount, or an unreadable directory is indeterminate, not dangling, and is preserved with its own distinct diagnostic rather than destroyed.
+The local and remote receivers apply the same classification, so this contract holds on both paths.
 Explicit per-spawn `--backend` and `FM_BACKEND` remain stronger than every home's local `config/backend`, including an inherited default.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
 `data/captain-shared.md` is main-authoritative in the primary home and read-only in secondmate homes.

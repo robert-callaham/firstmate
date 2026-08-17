@@ -127,14 +127,49 @@ fm_inherit_sha256() {
   fi
 }
 
-# Never write over a live operator symlink. propagate_inheritable_config
-# refuses one before calling here; this restates the invariant at the point of
-# the write so a second caller or a reordering cannot silently reintroduce the
-# data-loss path. A link whose target does not resolve protects nothing and is
-# replaced below like any other stale destination artifact.
+# fm_inherit_dest_link_state <symlink path>
+# Prints live, dangling, or unknown. Only "dangling" authorizes destroying the
+# link, and it is reported only on POSITIVE confirmation that the final target
+# is absent: the target's own parent directory must be present and searchable,
+# so a missing leaf is distinguished from a prefix that cannot be examined at
+# all. An unmounted volume, a locked encrypted mount, and an unreadable
+# intermediate directory all make a LIVE operator link look targetless to a
+# bare `-e` test, and session-start bootstrap runs early at login when exactly
+# those are still unavailable. Uncertainty therefore resolves to unknown, which
+# callers treat as live, because a preserved stale link costs one diagnostic
+# while a destroyed live link costs the operator's private tree.
+fm_inherit_dest_link_state() {
+  local path=$1 depth=0 target parent
+  while [ -L "$path" ]; do
+    [ "$depth" -lt 40 ] || { printf 'unknown\n'; return 0; }
+    target=$(readlink "$path" 2>/dev/null) || { printf 'unknown\n'; return 0; }
+    case "$target" in
+      /*) path=$target ;;
+      *) path="$(dirname -- "$path")/$target" ;;
+    esac
+    depth=$((depth + 1))
+  done
+  if [ -e "$path" ]; then
+    printf 'live\n'
+    return 0
+  fi
+  parent=$(dirname -- "$path")
+  if [ -d "$parent" ] && [ -r "$parent" ] && [ -x "$parent" ]; then
+    printf 'dangling\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+# Never write over an operator symlink that is live, or whose liveness cannot
+# be established. propagate_inheritable_config refuses both before calling
+# here; this restates the invariant at the point of the write so a second
+# caller or a reordering cannot silently reintroduce the data-loss path. Only a
+# confirmed dangling link protects nothing and is replaced below like any other
+# stale destination artifact.
 copy_inheritable_file() {
   local src=$1 dest=$2 dest_parent tmp
-  if [ -L "$dest" ] && [ -e "$dest" ]; then
+  if [ -L "$dest" ] && [ "$(fm_inherit_dest_link_state "$dest")" != dangling ]; then
     return 1
   fi
   if [ -e "$dest" ] && [ ! -f "$dest" ]; then
@@ -454,7 +489,7 @@ propagate_secondmate_inheritance() {
 }
 
 propagate_inheritable_config() {
-  local src_config=$1 dest_config=$2 item src dest reason rc
+  local src_config=$1 dest_config=$2 item src dest reason rc link_state
   [ -n "$src_config" ] || return 1
   [ -n "$dest_config" ] || return 1
   rc=0
@@ -477,17 +512,27 @@ propagate_inheritable_config() {
     # tree with nothing to notice it by. No item is exempt: this holds for the
     # whole declared set, including the one below with its own validation.
     #
-    # A DANGLING link is the opposite case and is deliberately not protected. It
-    # guards no tree, so refusing it would only make the item permanently
-    # unconvergeable and fail every convergence until someone removed it by
-    # hand. It falls through to the ordinary copy and absence-mirror handling
-    # below, which replaces or removes it exactly as any other stale artifact.
-    if [ -L "$dest" ] && [ -e "$dest" ]; then
-      reason="refused to replace or remove symlinked destination"
-      warn_inheritable_config_error "$item" "$dest" "$reason"
-      record_inheritable_config_result "$item" error "$reason"
-      rc=1
-      continue
+    # A CONFIRMED DANGLING link is the opposite case and is deliberately not
+    # protected. It guards no tree, so refusing it would only make the item
+    # permanently unconvergeable and fail every convergence until someone
+    # removed it by hand. It falls through to the ordinary copy and
+    # absence-mirror handling below, which replaces or removes it exactly as any
+    # other stale artifact. A link whose target cannot be examined is NOT that
+    # case and is preserved with its own diagnostic; see
+    # fm_inherit_dest_link_state for why uncertainty resolves that way.
+    if [ -L "$dest" ]; then
+      link_state=$(fm_inherit_dest_link_state "$dest")
+      if [ "$link_state" != dangling ]; then
+        if [ "$link_state" = unknown ]; then
+          reason="preserved symlinked destination whose target could not be examined"
+        else
+          reason="refused to replace or remove symlinked destination"
+        fi
+        warn_inheritable_config_error "$item" "$dest" "$reason"
+        record_inheritable_config_result "$item" error "$reason"
+        rc=1
+        continue
+      fi
     fi
     # This one scalar config is consumed as a local safety boundary, so reject
     # every unsafe or malformed source/destination artifact before the generic

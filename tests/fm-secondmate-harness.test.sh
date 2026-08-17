@@ -258,7 +258,7 @@ SH
 # B) propagate_inheritable_config unit behavior
 # ===========================================================================
 test_propagate_lib() {
-  local d src dest home m1 m2 outside stdout stderr guard_repo err_text
+  local d src dest home m1 m2 outside stdout stderr guard_repo err_text unreachable
   d="$TMP_ROOT/prop-lib"
   src="$d/src"
   home="$d/home1"
@@ -354,6 +354,64 @@ test_propagate_lib() {
     || fail "copy_inheritable_file refused a dangling destination link"
   [ -L "$dest/crew-harness" ] && fail "copy_inheritable_file did not replace a dangling destination link"
   [ "$(cat "$dest/crew-harness")" = pi ] || fail "copy_inheritable_file lost the source bytes"
+
+  # Third class: the target cannot be examined at all, which a bare -e test
+  # cannot tell from a missing one. It must be preserved, not destroyed. The
+  # unreadable-directory stand-in for an unmounted volume does not hold as root.
+  if [ "$(id -u)" != 0 ]; then
+    unreachable="$d/unreachable"
+    mkdir -p "$unreachable/inner"
+    rm -f "$dest/crew-harness"
+    ln -s "$unreachable/inner/backend" "$dest/crew-harness"
+    chmod 000 "$unreachable"
+    stderr="$d/unreachable-copy.err"
+    if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
+      chmod 755 "$unreachable"
+      fail "an unexaminable destination link target did not stop propagation"
+    fi
+    assert_contains "$(cat "$stderr")" \
+      "fm-config-inherit: error: preserved symlinked destination whose target could not be examined crew-harness" \
+      "an unexaminable destination link target did not emit its own diagnostic"
+    [ -L "$dest/crew-harness" ] || {
+      chmod 755 "$unreachable"
+      fail "propagation unlinked a destination link whose target could not be examined"
+    }
+    if copy_inheritable_file "$src/crew-harness" "$dest/crew-harness"; then
+      chmod 755 "$unreachable"
+      fail "copy_inheritable_file wrote over a destination link whose target could not be examined"
+    fi
+    [ -L "$dest/crew-harness" ] || {
+      chmod 755 "$unreachable"
+      fail "copy_inheritable_file unlinked a destination link whose target could not be examined"
+    }
+    # The absence mirror is the sharpest route: it removes rather than replaces.
+    mv "$src/crew-harness" "$d/held-crew-harness"
+    stderr="$d/unreachable-absence.err"
+    if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
+      chmod 755 "$unreachable"
+      fail "an unexaminable destination link target did not stop the absence mirror"
+    fi
+    assert_contains "$(cat "$stderr")" \
+      "fm-config-inherit: error: preserved symlinked destination whose target could not be examined crew-harness" \
+      "the absence mirror did not emit the unexaminable-target diagnostic"
+    [ -L "$dest/crew-harness" ] || {
+      chmod 755 "$unreachable"
+      fail "the absence mirror unlinked a destination link whose target could not be examined"
+    }
+    [ "$(readlink "$dest/crew-harness")" = "$unreachable/inner/backend" ] || {
+      chmod 755 "$unreachable"
+      fail "the absence mirror repointed a destination link whose target could not be examined"
+    }
+    mv "$d/held-crew-harness" "$src/crew-harness"
+    chmod 755 "$unreachable"
+    rm -rf "$unreachable"
+    rm -f "$dest/crew-harness"
+    propagate_inheritable_config "$src" "$dest" \
+      || fail "convergence did not resume after the unexaminable link was removed"
+    [ "$(cat "$dest/crew-harness")" = pi ] || fail "convergence did not restore the primary bytes"
+  else
+    echo '# skipped: unreadable-directory classification does not hold as root'
+  fi
 
   # 4. removing the source mirrors absence downstream (primary-authoritative)
   printf 'herdr\n' > "$dest/backend"
