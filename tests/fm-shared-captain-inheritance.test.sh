@@ -160,7 +160,7 @@ test_missing_source_mirrors_absence_without_losing_local_bytes() {
 }
 
 test_unsafe_artifacts_and_failure_restore_readonly_mode() {
-  local rec primary second other err before_mode rc primary_captain_target
+  local rec primary second other err before_mode rc primary_captain_target report
   rec=$(new_home_pair unsafe)
   primary=${rec%%|*}
   second=${rec#*|}
@@ -196,6 +196,26 @@ test_unsafe_artifacts_and_failure_restore_readonly_mode() {
   [ ! -e "$TMP_ROOT/shared-missing-target" ] \
     || fail "clearing a dangling destination link created its target"
   rm -f "$second/data/captain-shared.md"
+
+  # Same dangling destination with the primary value absent: the link is still
+  # cleared, and the removal must be reported rather than folded into unchanged.
+  mv "$primary/data/captain-shared.md" "$TMP_ROOT/held-shared-source"
+  ln -s "$TMP_ROOT/shared-missing-target" "$second/data/captain-shared.md"
+  report="$TMP_ROOT/dangling-absent.report"
+  : > "$report"
+  err="$TMP_ROOT/dangling-dest-absent.err"
+  FM_CONFIG_INHERIT_REPORT="$report" \
+    propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -eq 0 ] || fail "dangling destination link should not stop the shared-preference absence mirror"
+  [ -L "$second/data/captain-shared.md" ] \
+    && fail "absence mirror did not clear a dangling destination link"
+  [ ! -e "$second/data/captain-shared.md" ] \
+    || fail "absence mirror left a shared-preference destination behind"
+  assert_grep "$FM_SHARED_CAPTAIN_REL	pushed	mirrored primary absence by clearing a dangling destination link" \
+    "$report" "clearing a dangling destination link was reported as a no-op"
+  [ ! -e "$TMP_ROOT/shared-missing-target" ] \
+    || fail "the absence mirror created the dangling link target"
+  mv "$TMP_ROOT/held-shared-source" "$primary/data/captain-shared.md"
 
   write_shared "$second/data/captain-shared.md" "hardlinked local drift"
   other="$second/data/hardlink-copy"

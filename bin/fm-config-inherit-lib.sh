@@ -353,7 +353,7 @@ copy_shared_captain_file() {
 }
 
 propagate_shared_captain_preferences() {
-  local src_data=$1 dest_data=$2 src dest src_hash dest_hash dest_parent dest_home quarantine reason rc
+  local src_data=$1 dest_data=$2 src dest src_hash dest_hash dest_parent dest_home quarantine reason rc cleared_dangling
   [ -n "$src_data" ] || return 1
   [ -n "$dest_data" ] || return 1
   src="$src_data/$FM_SHARED_CAPTAIN_FILE"
@@ -361,6 +361,7 @@ propagate_shared_captain_preferences() {
   dest_parent=${dest%/*}
   dest_home=${dest_data%/data}
   rc=0
+  cleared_dangling=0
 
   # Give this file the same three-way OUTCOME as the config allowlist, so one
   # stated inheritance contract covers every inherited item rather than holding
@@ -372,13 +373,23 @@ propagate_shared_captain_preferences() {
   # and the checks below then see an ordinary absent destination. Without this
   # the shared file alone would stay permanently unconvergeable behind a
   # leftover link, the failure mode the contract rules out everywhere else.
-  if [ -L "$dest" ] && [ "$(fm_inherit_dest_link_state "$dest")" = dangling ]; then
+  #
+  # The `! -L "$dest_parent"` term is the same directory gate every other
+  # mutation here sits behind, so this one cannot be the sole path that writes
+  # inside a symlinked data/ without checking. It is a consistency gate, not a
+  # live loss path: only a positively confirmed dangling link is ever removed.
+  # A symlinked data/ falls through unchanged and the checks below refuse it as
+  # an unsafe destination, exactly as they did before this cleanup existed.
+  if [ ! -L "$dest_parent" ] \
+    && [ -L "$dest" ] \
+    && [ "$(fm_inherit_dest_link_state "$dest")" = dangling ]; then
     if ! rm -f "$dest" 2>/dev/null; then
       reason="failed to remove dangling symlinked destination"
       warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$dest" "$reason"
       record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
       return 1
     fi
+    cleared_dangling=1
   fi
 
   if [ -e "$src" ] || [ -L "$src" ]; then
@@ -481,6 +492,9 @@ propagate_shared_captain_preferences() {
       restore_shared_captain_readonly "$dest" || true
       rc=1
     fi
+  elif [ "$cleared_dangling" = 1 ]; then
+    record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" pushed \
+      "mirrored primary absence by clearing a dangling destination link"
   else
     record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" unchanged ""
   fi
