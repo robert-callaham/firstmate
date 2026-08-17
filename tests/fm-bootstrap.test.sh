@@ -1119,6 +1119,41 @@ test_crew_dispatch_policy_service_is_verbose_bootstrap_info() {
   pass "bootstrap surfaces delegated policy-service dispatch selectors with their policy owner"
 }
 
+test_crew_dispatch_policy_skill_resolves_from_either_root() {
+  local case_dir fakebin out unresolved
+  case_dir="$TMP_ROOT/dispatch-policy-roots"
+  unresolved="CREW_DISPATCH: policy skill not installed in this home - governor-admission (expected .agents/skills/governor-admission/SKILL.md); install it or correct config/crew-dispatch.json, because policy-service never falls back"
+  mkdir -p "$case_dir/home/config"
+  seed_policy_skill "$case_dir/root" governor-admission
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' '{"rules":[{"when":"budgeted feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"policy-service","policy":"governor-admission"}]}' > "$case_dir/home/config/crew-dispatch.json"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+
+  # A secondmate home inherits crew-dispatch.json from the primary, so its named
+  # policy skill can ship in the code root rather than the home.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/root" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  if printf '%s\n' "$out" | grep -q CREW_DISPATCH; then
+    fail "a policy skill present only in the code root must resolve, got: $out"
+  fi
+
+  seed_policy_skill "$case_dir/home" governor-admission
+  rm -rf "$case_dir/root/.agents"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/root" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  if printf '%s\n' "$out" | grep -q CREW_DISPATCH; then
+    fail "a policy skill present only in the home must resolve, got: $out"
+  fi
+
+  rm -rf "$case_dir/home/.agents"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/root" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = "$unresolved" ] \
+    || fail "a policy skill present in neither root must be reported, expected '$unresolved', got: $out"
+  pass "bootstrap resolves a named policy skill from either the home or the code root"
+}
+
 test_crew_dispatch_validation() {
   local label body expect mode case_dir fakebin out n
   n=0
@@ -1223,4 +1258,5 @@ test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_policy_service_is_verbose_bootstrap_info
+test_crew_dispatch_policy_skill_resolves_from_either_root
 test_crew_dispatch_validation

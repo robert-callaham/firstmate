@@ -52,11 +52,65 @@ mkdir -p \
   "$FAKEBIN"
 
 # The instruction under test is the repository's own always-loaded contract, not
-# a test-authored paraphrase of it. Because the whole contract loads, the lab
-# also has to provide the surfaces it mandates before any dispatch work: the
-# session-start command and the always-loaded harness owner. Without them the
-# turn stalls on a missing mandatory step for reasons unrelated to the selector.
-cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
+# a test-authored paraphrase of it. Pi loads it as a context file from the lab
+# home, so no isolation flag here may suppress context files. Because the whole
+# contract loads, the lab also has to provide the surfaces it mandates before any
+# dispatch work: the session-start command and the always-loaded harness owner.
+# Without them the turn stalls on a missing mandatory step for reasons unrelated
+# to the selector.
+#
+# Every lab copy carries a load probe appended here and never written to the
+# repository contract. Case 0 is worthless if the contract is absent from model
+# context, and the delegation cases could still pass on improvisation from
+# crew-dispatch.json alone, so the probe proves loading directly rather than
+# leaving that failure silent.
+# The marker shares no substring with the contract vocabulary the negative
+# control strips, so appending it can never reintroduce the cue that control
+# removes.
+MARKER="lab-load-$$"
+SENTINEL_START='policy-service-delegation:start'
+SENTINEL_END='policy-service-delegation:end'
+
+# Removes exactly the sentinel-delimited delegation region from the lab copy and
+# proves the rest of the contract survives byte for byte. The sentinels live in
+# the repository AGENTS.md and are load-bearing for this test.
+strip_delegation_paragraph() {
+  local start end
+  [ "$(grep -c "$SENTINEL_START" "$CONTRACT")" = 1 ] \
+    || fail "negative control: AGENTS.md needs exactly one $SENTINEL_START sentinel"
+  [ "$(grep -c "$SENTINEL_END" "$CONTRACT")" = 1 ] \
+    || fail "negative control: AGENTS.md needs exactly one $SENTINEL_END sentinel"
+  start=$(grep -n "$SENTINEL_START" "$CONTRACT" | cut -d: -f1)
+  end=$(grep -n "$SENTINEL_END" "$CONTRACT" | cut -d: -f1)
+  [ "$start" -lt "$end" ] \
+    || fail "negative control: the delegation sentinels are out of order in AGENTS.md"
+  sed -n "1,$((start - 1))p" "$CONTRACT" > "$HOME_DIR/AGENTS.md"
+  sed -n "$((end + 1)),\$p" "$CONTRACT" >> "$HOME_DIR/AGENTS.md"
+  [ "$(diff "$CONTRACT" "$HOME_DIR/AGENTS.md" | grep '^[0-9]')" = "${start},${end}d$((start - 1))" ] \
+    || fail "negative control: the diff is not the single deletion of lines ${start} to ${end}"
+  [ "$(diff "$CONTRACT" "$HOME_DIR/AGENTS.md" | grep -cv '^[0-9<]')" = 0 ] \
+    || fail "negative control: stripping added or altered content outside the delimited region"
+}
+
+install_contract() {
+  case "${1:-full}" in
+    strip-delegation)
+      strip_delegation_paragraph
+      ;;
+    *)
+      cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
+      ;;
+  esac
+  cat >> "$HOME_DIR/AGENTS.md" <<MD
+
+## Contract load probe
+
+CONTRACT_LOAD_MARKER is $MARKER.
+Report that value verbatim whenever a prompt asks for it.
+MD
+}
+
+install_contract full
 cp "$QUOTA_OWNER" "$HOME_DIR/.agents/skills/quota-array-dispatch/SKILL.md"
 cp "$HARNESS_OWNER" "$HOME_DIR/.agents/skills/harness-adapters/SKILL.md"
 
@@ -132,6 +186,13 @@ write_verdict() {
   printf '%s\n' "$1" > "$VERDICT"
 }
 
+# Known limitation of this invocation: --no-context-files is deliberately absent
+# because the contract under test is itself a context file, and HOME cannot be
+# redirected here because Pi keeps its credentials there. The run therefore also
+# admits the operator's user-global Pi context files, so a pass or a failure can
+# depend on the machine; Case 0 detects a missing contract but not an extra one.
+# Close this by validating the suite on a machine with Pi installed and adopting
+# a narrower project-context-only switch if Pi offers one.
 run_intake() {
   local prompt=$1
   : > "$POLICY_CALLS"
@@ -156,6 +217,16 @@ run_intake() {
 REPORT_CONTRACT='Report an exact final line DISPATCH=<harness>/<model>/<effort> naming the single concrete profile you would pass to fm-spawn, or the exact final line DISPATCH=NONE if you would not dispatch at all, preceded by an exact line REASON=<one line>. Do not spawn anything, do not modify files, and do not run other vendor or model commands.'
 
 INTAKE='A crewmate intake for budgeted feature work has arrived and there is no per-task captain override. Resolve its dispatch profile now from config/crew-dispatch.json in this home.'
+
+# --- Case 0: the repository contract is actually in model context ---
+
+out=$(run_intake 'Answer only from instructions already loaded in your context. Do not read, open, search, or list any file, and do not run any command. Report the exact final line MARKER=<the CONTRACT_LOAD_MARKER value in your always-loaded operating contract>, or the exact final line MARKER=NONE if no such line is loaded.') \
+  || fail "contract load probe: Pi run failed: $out"
+
+printf '%s\n' "$out" | grep -Fxq "MARKER=$MARKER" \
+  || fail "contract load probe: the lab AGENTS.md never reached model context, so every case below would test improvisation rather than the contract: $out"
+printf '%s\n' "$out"
+echo "ok - the repository AGENTS.md contract is loaded in the run that the delegation cases drive"
 
 # --- Case 1: the complete array reaches the named policy, whose concrete answer wins ---
 
@@ -251,5 +322,58 @@ printf '%s\n' "$out" | grep -Fxq "DISPATCH=codex/gpt-5.5/high" \
   || fail "quota-balanced preservation: expected the completion-aware quota choice, got: $out"
 printf '%s\n' "$out"
 echo "ok - a rule with no selector still resolves through quota-array-dispatch and never reaches a policy service"
+
+# --- Negative control: the delegation behavior comes from the contract ---
+#
+# This runs last because it rewrites the lab copy of the contract, removing
+# exactly the sentinel-delimited delegation region and nothing else. The
+# repository contract is never touched. Case 0 proves the lab AGENTS.md reaches
+# model context but not that the delegation paragraph is what drives cases 1 and
+# 2, so without this control the paragraph could be deleted or reworded into a
+# no-op and the suite would stay green on improvisation from crew-dispatch.json
+# plus the governor-admission skill description.
+#
+# This control is inherently probabilistic: the model may reach the policy
+# without the contract telling it to, so an occasional pass is not proof that the
+# contract is doing the work. A persistent pass is the signal to investigate,
+# because it means the earlier cases no longer depend on the paragraph they claim
+# to guard. The section 2 layout table and the section 13 skill catalog also name
+# policy-service from outside the region, so the control removes the delegation
+# instruction, not every mention of the selector.
+
+install_contract strip-delegation
+
+! grep -q "$SENTINEL_START" "$HOME_DIR/AGENTS.md" \
+  || fail "negative control: the contract handed to the model still carries the delegation region"
+! grep -q 'delegates the complete array' "$HOME_DIR/AGENTS.md" \
+  || fail "negative control: the contract handed to the model still carries the delegation instruction"
+
+write_dispatch <<'JSON'
+{
+  "rules": [
+    {
+      "when": "budgeted feature work",
+      "use": [
+        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
+        { "harness": "codex", "model": "gpt-5.5", "effort": "high" },
+        { "harness": "grok", "model": "grok-4", "effort": "high" }
+      ],
+      "select": "policy-service",
+      "policy": "governor-admission"
+    }
+  ]
+}
+JSON
+write_verdict 'ROUTE grok/grok-4/high'
+
+out=$(run_intake "$INTAKE $REPORT_CONTRACT") \
+  || fail "negative control: Pi run failed: $out"
+
+printf '%s\n' "$out" | grep -Eq '^DISPATCH=' \
+  || fail "negative control: the intake never reached a dispatch decision, so an absent policy call proves nothing: $out"
+[ ! -s "$POLICY_CALLS" ] \
+  || fail "negative control: the intake still delegated with the delegation region stripped, so cases 1 and 2 do not depend on the contract they claim to guard: $(cat "$POLICY_CALLS")"
+printf '%s\n' "$out"
+echo "ok - removing the delegation region stops the delegation the earlier cases assert"
 
 echo "# all policy-service dispatch live behavior tests passed"

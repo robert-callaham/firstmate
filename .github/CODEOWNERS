@@ -1,0 +1,5 @@
+# Code owner for this repository.
+# Every PR into the default branch requires review from the owner below.
+# Enforced org-wide by the `platform-pr-review` ruleset (forgewurks-platform).
+
+* @rob
