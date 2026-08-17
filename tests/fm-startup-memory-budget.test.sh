@@ -234,8 +234,8 @@ test_budget_accounting_reports_all_three_files_and_safe_failure() {
   rc=$?
   set -e
   expect_code 2 "$rc" "a broken memory-file link should fail the accounting command"
-  assert_contains "$out" 'memory file is not an ordinary regular file' \
-    "accounting failure did not identify the unsafe memory file"
+  assert_contains "$out" 'memory file is absent' \
+    "a broken memory-file link was not reported as an absent target"
 
   rm -f "$home/data/captain.md"
   mkdir -p "$TMP_ROOT/accounting-dir"
@@ -293,7 +293,7 @@ run_config_push() {
 }
 
 test_primary_budget_converges_with_exact_reread_and_safe_failures() {
-  local world="$TMP_ROOT/propagation" rec root home sm fakebin log out rc instruction expected outside
+  local world="$TMP_ROOT/propagation" rec root home sm fakebin log out rc instruction expected outside linked_dest
   mkdir -p "$world"
   rec=$(new_propagation_world "$world")
   root=${rec%%|*}
@@ -336,6 +336,28 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
   run_config_push "$root" "$home" "$fakebin" "$log" >/dev/null
   [ "$(<"$sm/config/startup-memory-budget")" = 321 ] \
     || fail "safe retry did not restore the converged primary budget"
+
+  linked_dest="$world/secondmate-private-budget"
+  printf '111\n' > "$linked_dest"
+  rm -f "$sm/config/startup-memory-budget"
+  ln -s "$linked_dest" "$sm/config/startup-memory-budget"
+  set +e
+  out=$(run_config_push "$root" "$home" "$fakebin" "$log" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "a symlinked inherited destination should stop propagation"
+  assert_contains "$out" 'startup-memory-budget: error - destination is symlinked' \
+    "a symlinked destination did not produce a concrete propagation error"
+  [ -L "$sm/config/startup-memory-budget" ] \
+    || fail "propagation unlinked a symlinked destination"
+  [ "$(readlink "$sm/config/startup-memory-budget")" = "$linked_dest" ] \
+    || fail "propagation repointed a symlinked destination"
+  [ "$(<"$linked_dest")" = 111 ] \
+    || fail "propagation wrote through a symlinked destination into its private target"
+  rm -f "$sm/config/startup-memory-budget"
+  run_config_push "$root" "$home" "$fakebin" "$log" >/dev/null
+  [ "$(<"$sm/config/startup-memory-budget")" = 321 ] \
+    || fail "removing the destination link did not restore the converged primary budget"
 
   rm -f "$home/config/startup-memory-budget"
   out=$(run_config_push "$root" "$home" "$fakebin" "$log")

@@ -8,8 +8,10 @@
 # config/startup-memory-budget.  `report` prints the stable local estimate for
 # data/captain.md, data/captain-shared.md, and data/learnings.md together.
 # Bootstrap owns default materialization; this command never creates or repairs
-# configuration, so an absent, malformed, symlinked, hardlinked, or otherwise
-# unsafe value is a concrete error rather than an inferred default.
+# configuration, so an absent, malformed, hardlinked, broken-link, cyclic, or
+# otherwise unsafe value is a concrete error rather than an inferred default.
+# A symlink is resolved first and every check then applies to its real target,
+# so private configuration linked in from a separate tree reads normally.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +24,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-startup-memory-budget-lib.sh"
 
 usage() {
-  sed -n '2,11{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,14{s/^# \{0,1\}//;p;}' "$0"
 }
 
 print_error() {

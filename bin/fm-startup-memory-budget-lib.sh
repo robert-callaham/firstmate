@@ -52,7 +52,7 @@ fm_startup_memory_budget_resolve() {
   done
   parent=$(dirname -- "$path")
   base=$(basename -- "$path")
-  parent=$(cd -P -- "$parent" 2>/dev/null && pwd -P) || return 1
+  parent=$(CDPATH='' cd -P -- "$parent" 2>/dev/null && pwd -P) || return 1
   case "$parent" in
     */) printf '%s%s\n' "$parent" "$base" ;;
     *) printf '%s/%s\n' "$parent" "$base" ;;
@@ -76,8 +76,11 @@ fm_startup_memory_budget_config_dir_safe() {
 # Sets FM_STARTUP_MEMORY_BUDGET_VALUE only when <path> finally names a regular,
 # single-linked file containing exactly one positive decimal value and one
 # terminating newline.  Symlinks are resolved first and every check applies to
-# the resolved target; the hardlink-count check below is the anti-substitution
-# guard, and it is strictly stronger than refusing the link itself.
+# the resolved target.  Resolving rather than refusing a link is an accepted
+# tradeoff for the local layout described above, not a containment claim: the
+# hardlink-count check below still refuses a target that shares its inode with
+# a second directory entry, but it is orthogonal to symlinks and says nothing
+# about a link that names some other single-linked file elsewhere on disk.
 fm_startup_memory_budget_file_valid() {
   local path=$1 resolved links value
   FM_STARTUP_MEMORY_BUDGET_VALUE=""
@@ -218,6 +221,10 @@ fm_startup_memory_measure_file() {
     fm_startup_memory_budget_fail "memory file link could not be resolved: $path"
     return 1
   }
+  if [ ! -e "$resolved" ]; then
+    fm_startup_memory_budget_fail "memory file is absent: $path"
+    return 1
+  fi
   if [ ! -f "$resolved" ]; then
     fm_startup_memory_budget_fail "memory file is not an ordinary regular file: $path"
     return 1

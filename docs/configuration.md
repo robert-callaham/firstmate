@@ -156,7 +156,9 @@ A secondmate does not create an independent default and instead receives the pri
 The file must be one positive base-10 integer followed by exactly one newline in a regular, single-linked file beneath a `config/` directory.
 Symlinks are resolved before validation, so `config/` or the file itself may be linked in from a separate tree - the common case being an operator who keeps private configuration outside a public checkout - and every safety check then applies to the resolved target rather than to the link.
 Malformed, multi-line, hardlinked, special, broken-link, cyclic, or otherwise unsafe values are rejected rather than treated as a default.
-The hardlink-count check is what refuses a substituted file; it applies to the resolved target and is unaffected by how the name was reached.
+The hardlink-count check applies to the resolved target and refuses one that shares its inode with a second directory entry; it is orthogonal to symlinks and does not vouch for where a link points, which is the accepted tradeoff for supporting the layout above.
+Resolution applies to reading a home's own value; propagation refuses a secondmate whose own `config/startup-memory-budget` is itself a symlink, reporting a concrete error and leaving the link untouched rather than replacing it or writing through it, since the primary owns that file's bytes.
+A symlinked `config/` directory holding an ordinary budget file is unaffected and converges normally.
 Use `bin/fm-startup-memory-budget.sh read` to validate and print the effective value, or `bin/fm-startup-memory-budget.sh report` to account for the three files.
 The stable local estimate is `ceil(UTF-8 bytes / 3)` per file, a conservative portable approximation rather than a provider-exact tokenizer.
 An inherited `data/captain-shared.md` counts in a secondmate's total but remains primary-owned and read-only there.

@@ -485,6 +485,20 @@ propagate_inheritable_config() {
           continue
         fi
       fi
+      # Resolving a symlink is supported for READING a home's own budget, never
+      # for a destination the primary is about to overwrite. The generic copy
+      # below deliberately replaces a symlinked destination with a regular file
+      # rather than writing through an operator link it does not own, which for
+      # this item would silently disconnect a private tree an operator linked in
+      # here, with nothing to notice it by. Refuse instead: the link survives and
+      # the operator gets a concrete reason on every convergence.
+      if [ -L "$dest" ]; then
+        reason="destination is symlinked - this file is primary-owned and is neither replaced nor written through"
+        warn_inheritable_config_error "$item" "$dest" "$reason"
+        record_inheritable_config_result "$item" error "$reason"
+        rc=1
+        continue
+      fi
       if [ -e "$dest" ] || [ -L "$dest" ]; then
         if ! fm_startup_memory_budget_file_valid "$dest"; then
           reason="unsafe or invalid destination: $FM_STARTUP_MEMORY_BUDGET_ERROR"
