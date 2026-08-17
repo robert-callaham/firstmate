@@ -52,11 +52,27 @@ mkdir -p \
   "$FAKEBIN"
 
 # The instruction under test is the repository's own always-loaded contract, not
-# a test-authored paraphrase of it. Because the whole contract loads, the lab
-# also has to provide the surfaces it mandates before any dispatch work: the
-# session-start command and the always-loaded harness owner. Without them the
-# turn stalls on a missing mandatory step for reasons unrelated to the selector.
+# a test-authored paraphrase of it. Pi loads it as a context file from the lab
+# home, so no isolation flag here may suppress context files. Because the whole
+# contract loads, the lab also has to provide the surfaces it mandates before any
+# dispatch work: the session-start command and the always-loaded harness owner.
+# Without them the turn stalls on a missing mandatory step for reasons unrelated
+# to the selector.
 cp "$CONTRACT" "$HOME_DIR/AGENTS.md"
+
+# A load probe appended only to the lab copy, never to the repository contract.
+# Every case below is worthless if the contract is absent from model context, and
+# the three delegation cases could still pass on improvisation from
+# crew-dispatch.json alone, so the probe proves loading directly rather than
+# leaving that failure silent.
+MARKER="fm-policy-service-$(basename "$LAB")"
+cat >> "$HOME_DIR/AGENTS.md" <<MD
+
+## Contract load probe
+
+CONTRACT_LOAD_MARKER is $MARKER.
+Report that value verbatim whenever a prompt asks for it.
+MD
 cp "$QUOTA_OWNER" "$HOME_DIR/.agents/skills/quota-array-dispatch/SKILL.md"
 cp "$HARNESS_OWNER" "$HOME_DIR/.agents/skills/harness-adapters/SKILL.md"
 
@@ -156,6 +172,16 @@ run_intake() {
 REPORT_CONTRACT='Report an exact final line DISPATCH=<harness>/<model>/<effort> naming the single concrete profile you would pass to fm-spawn, or the exact final line DISPATCH=NONE if you would not dispatch at all, preceded by an exact line REASON=<one line>. Do not spawn anything, do not modify files, and do not run other vendor or model commands.'
 
 INTAKE='A crewmate intake for budgeted feature work has arrived and there is no per-task captain override. Resolve its dispatch profile now from config/crew-dispatch.json in this home.'
+
+# --- Case 0: the repository contract is actually in model context ---
+
+out=$(run_intake 'Answer only from instructions already loaded in your context. Do not read, open, search, or list any file, and do not run any command. Report the exact final line MARKER=<the CONTRACT_LOAD_MARKER value in your always-loaded operating contract>, or the exact final line MARKER=NONE if no such line is loaded.') \
+  || fail "contract load probe: Pi run failed: $out"
+
+printf '%s\n' "$out" | grep -Fxq "MARKER=$MARKER" \
+  || fail "contract load probe: the lab AGENTS.md never reached model context, so every case below would test improvisation rather than the contract: $out"
+printf '%s\n' "$out"
+echo "ok - the repository AGENTS.md contract is loaded in the run that the delegation cases drive"
 
 # --- Case 1: the complete array reaches the named policy, whose concrete answer wins ---
 
