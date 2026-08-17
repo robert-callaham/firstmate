@@ -97,7 +97,7 @@ if [ "${1:-}" = "--required-version" ]; then
 fi
 
 fm_lint_usage() {
-  sed -n '2,39{s/^# \{0,1\}//;p;}' "$SELF"
+  sed -n '2,${/^#/!q; s/^# \{0,1\}//;p;}' "$SELF"
 }
 
 JOBS=${FM_LINT_JOBS:-2}

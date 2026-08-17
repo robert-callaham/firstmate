@@ -222,7 +222,7 @@ fm_startup_memory_measure_file() {
     return 1
   }
   if [ ! -e "$resolved" ]; then
-    fm_startup_memory_budget_fail "memory file is absent: $path"
+    fm_startup_memory_budget_fail "memory file link target is absent: $path"
     return 1
   fi
   if [ ! -f "$resolved" ]; then

@@ -454,6 +454,21 @@ propagate_inheritable_config() {
     fi
     src="$src_config/$item"
     dest="$dest_config/$item"
+    # An operator may link an individual item into a private tree kept outside
+    # this home. That link is theirs, not ours: propagation neither replaces it
+    # with a regular file nor writes through it to bytes the primary does not
+    # own, and the absence mirror below never unlinks it either. Refusing loudly
+    # keeps the link intact and states a concrete reason on every convergence,
+    # where silently unlinking it would disconnect that tree with nothing to
+    # notice it by. No item is exempt: this holds for the whole declared set,
+    # including the one below with its own additional validation.
+    if [ -L "$dest" ]; then
+      reason="refused to replace or remove symlinked destination"
+      warn_inheritable_config_error "$item" "$dest" "$reason"
+      record_inheritable_config_result "$item" error "$reason"
+      rc=1
+      continue
+    fi
     # This one scalar config is consumed as a local safety boundary, so reject
     # every unsafe or malformed source/destination artifact before the generic
     # byte-copy behavior below can treat it as ordinary inherited material.
@@ -484,20 +499,6 @@ propagate_inheritable_config() {
           rc=1
           continue
         fi
-      fi
-      # Resolving a symlink is supported for READING a home's own budget, never
-      # for a destination the primary is about to overwrite. The generic copy
-      # below deliberately replaces a symlinked destination with a regular file
-      # rather than writing through an operator link it does not own, which for
-      # this item would silently disconnect a private tree an operator linked in
-      # here, with nothing to notice it by. Refuse instead: the link survives and
-      # the operator gets a concrete reason on every convergence.
-      if [ -L "$dest" ]; then
-        reason="destination is symlinked - this file is primary-owned and is neither replaced nor written through"
-        warn_inheritable_config_error "$item" "$dest" "$reason"
-        record_inheritable_config_result "$item" error "$reason"
-        rc=1
-        continue
       fi
       if [ -e "$dest" ] || [ -L "$dest" ]; then
         if ! fm_startup_memory_budget_file_valid "$dest"; then

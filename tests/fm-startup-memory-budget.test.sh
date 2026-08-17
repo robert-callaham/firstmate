@@ -234,8 +234,8 @@ test_budget_accounting_reports_all_three_files_and_safe_failure() {
   rc=$?
   set -e
   expect_code 2 "$rc" "a broken memory-file link should fail the accounting command"
-  assert_contains "$out" 'memory file is absent' \
-    "a broken memory-file link was not reported as an absent target"
+  assert_contains "$out" 'memory file link target is absent' \
+    "a broken memory-file link was not reported as an absent link target"
 
   rm -f "$home/data/captain.md"
   mkdir -p "$TMP_ROOT/accounting-dir"
@@ -293,7 +293,7 @@ run_config_push() {
 }
 
 test_primary_budget_converges_with_exact_reread_and_safe_failures() {
-  local world="$TMP_ROOT/propagation" rec root home sm fakebin log out rc instruction expected outside linked_dest
+  local world="$TMP_ROOT/propagation" rec root home sm fakebin log out rc instruction expected outside linked_dest linked_config
   mkdir -p "$world"
   rec=$(new_propagation_world "$world")
   root=${rec%%|*}
@@ -346,7 +346,7 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
   rc=$?
   set -e
   expect_code 1 "$rc" "a symlinked inherited destination should stop propagation"
-  assert_contains "$out" 'startup-memory-budget: error - destination is symlinked' \
+  assert_contains "$out" 'startup-memory-budget: error - refused to replace or remove symlinked destination' \
     "a symlinked destination did not produce a concrete propagation error"
   [ -L "$sm/config/startup-memory-budget" ] \
     || fail "propagation unlinked a symlinked destination"
@@ -354,10 +354,61 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
     || fail "propagation repointed a symlinked destination"
   [ "$(<"$linked_dest")" = 111 ] \
     || fail "propagation wrote through a symlinked destination into its private target"
+
+  # The same link must also survive the absence-mirroring removal path.
+  mv "$home/config/startup-memory-budget" "$world/held-primary-budget"
+  set +e
+  out=$(run_config_push "$root" "$home" "$fakebin" "$log" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "a symlinked destination should stop the absence mirror"
+  assert_contains "$out" 'startup-memory-budget: error - refused to replace or remove symlinked destination' \
+    "a symlinked destination on the absence mirror did not produce a concrete error"
+  [ -L "$sm/config/startup-memory-budget" ] \
+    || fail "the absence mirror unlinked a symlinked destination"
+  [ "$(readlink "$sm/config/startup-memory-budget")" = "$linked_dest" ] \
+    || fail "the absence mirror repointed a symlinked destination"
+  [ "$(<"$linked_dest")" = 111 ] \
+    || fail "the absence mirror changed a symlinked destination target"
+  mv "$world/held-primary-budget" "$home/config/startup-memory-budget"
+
   rm -f "$sm/config/startup-memory-budget"
   run_config_push "$root" "$home" "$fakebin" "$log" >/dev/null
   [ "$(<"$sm/config/startup-memory-budget")" = 321 ] \
     || fail "removing the destination link did not restore the converged primary budget"
+
+  # A symlinked destination config/ never converges, by either of two separate
+  # guards, and neither one disturbs the operator's link.
+  linked_config="$sm/private-config"
+  mkdir -p "$linked_config"
+  mv "$sm/config/startup-memory-budget" "$linked_config/startup-memory-budget"
+  mv "$sm/config" "$world/secondmate-config-real"
+  ln -s "$linked_config" "$sm/config"
+  printf '654\n' > "$home/config/startup-memory-budget"
+  out=$(run_config_push "$root" "$home" "$fakebin" "$log" 2>&1)
+  assert_contains "$out" 'startup-memory-budget: skipped' \
+    "a symlinked destination config directory was not reported as skipped"
+  [ -L "$sm/config" ] || fail "propagation replaced the destination config directory link"
+  [ "$(readlink "$sm/config")" = "$linked_config" ] \
+    || fail "propagation repointed the destination config directory link"
+  [ "$(<"$linked_config/startup-memory-budget")" = 321 ] \
+    || fail "a skipped destination config directory was still written through"
+
+  rm -f "$sm/config"
+  mkdir -p "$world/secondmate-outside-config"
+  ln -s "$world/secondmate-outside-config" "$sm/config"
+  out=$(run_config_push "$root" "$home" "$fakebin" "$log" 2>&1)
+  assert_contains "$out" 'must resolve inside the secondmate home' \
+    "a config directory resolving outside the home was not reported as an unsafe home"
+  [ -L "$sm/config" ] || fail "an unsafe home skip removed the config directory link"
+  [ ! -e "$world/secondmate-outside-config/startup-memory-budget" ] \
+    || fail "an unsafe home skip still wrote through the config directory link"
+
+  rm -f "$sm/config"
+  mv "$world/secondmate-config-real" "$sm/config"
+  rm -rf "$linked_config"
+  printf '321\n' > "$home/config/startup-memory-budget"
+  printf '321\n' > "$sm/config/startup-memory-budget"
 
   rm -f "$home/config/startup-memory-budget"
   out=$(run_config_push "$root" "$home" "$fakebin" "$log")

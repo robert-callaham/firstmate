@@ -24,7 +24,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-startup-memory-budget-lib.sh"
 
 usage() {
-  sed -n '2,14{s/^# \{0,1\}//;p;}' "$0"
+  sed -n '2,${/^#/!q; s/^# \{0,1\}//;p;}' "$0"
 }
 
 print_error() {
