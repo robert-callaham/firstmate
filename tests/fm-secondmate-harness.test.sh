@@ -363,47 +363,41 @@ test_propagate_lib() {
     mkdir -p "$unreachable/inner"
     rm -f "$dest/crew-harness"
     ln -s "$unreachable/inner/backend" "$dest/crew-harness"
+    # fail exits into fm_test_cleanup, whose rm -rf cannot descend a mode-000
+    # directory, so the restore has to cover every exit path by construction.
+    # Per tests/lib.sh, an own EXIT trap calls fm_test_cleanup from inside it.
+    trap 'chmod 755 "$unreachable" 2>/dev/null || true; fm_test_cleanup' EXIT
     chmod 000 "$unreachable"
     stderr="$d/unreachable-copy.err"
     if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
-      chmod 755 "$unreachable"
       fail "an unexaminable destination link target did not stop propagation"
     fi
     assert_contains "$(cat "$stderr")" \
-      "fm-config-inherit: error: preserved symlinked destination whose target could not be examined crew-harness" \
+      "fm-config-inherit: error: preserved unexaminable symlinked destination crew-harness" \
       "an unexaminable destination link target did not emit its own diagnostic"
-    [ -L "$dest/crew-harness" ] || {
-      chmod 755 "$unreachable"
-      fail "propagation unlinked a destination link whose target could not be examined"
-    }
+    [ -L "$dest/crew-harness" ] \
+      || fail "propagation unlinked a destination link whose target could not be examined"
     if copy_inheritable_file "$src/crew-harness" "$dest/crew-harness"; then
-      chmod 755 "$unreachable"
       fail "copy_inheritable_file wrote over a destination link whose target could not be examined"
     fi
-    [ -L "$dest/crew-harness" ] || {
-      chmod 755 "$unreachable"
-      fail "copy_inheritable_file unlinked a destination link whose target could not be examined"
-    }
+    [ -L "$dest/crew-harness" ] \
+      || fail "copy_inheritable_file unlinked a destination link whose target could not be examined"
     # The absence mirror is the sharpest route: it removes rather than replaces.
     mv "$src/crew-harness" "$d/held-crew-harness"
     stderr="$d/unreachable-absence.err"
     if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
-      chmod 755 "$unreachable"
       fail "an unexaminable destination link target did not stop the absence mirror"
     fi
     assert_contains "$(cat "$stderr")" \
-      "fm-config-inherit: error: preserved symlinked destination whose target could not be examined crew-harness" \
+      "fm-config-inherit: error: preserved unexaminable symlinked destination crew-harness" \
       "the absence mirror did not emit the unexaminable-target diagnostic"
-    [ -L "$dest/crew-harness" ] || {
-      chmod 755 "$unreachable"
-      fail "the absence mirror unlinked a destination link whose target could not be examined"
-    }
-    [ "$(readlink "$dest/crew-harness")" = "$unreachable/inner/backend" ] || {
-      chmod 755 "$unreachable"
-      fail "the absence mirror repointed a destination link whose target could not be examined"
-    }
+    [ -L "$dest/crew-harness" ] \
+      || fail "the absence mirror unlinked a destination link whose target could not be examined"
+    [ "$(readlink "$dest/crew-harness")" = "$unreachable/inner/backend" ] \
+      || fail "the absence mirror repointed a destination link whose target could not be examined"
     mv "$d/held-crew-harness" "$src/crew-harness"
     chmod 755 "$unreachable"
+    trap fm_test_cleanup EXIT
     rm -rf "$unreachable"
     rm -f "$dest/crew-harness"
     propagate_inheritable_config "$src" "$dest" \

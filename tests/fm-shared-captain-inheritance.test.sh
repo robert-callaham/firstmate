@@ -160,10 +160,11 @@ test_missing_source_mirrors_absence_without_losing_local_bytes() {
 }
 
 test_unsafe_artifacts_and_failure_restore_readonly_mode() {
-  local rec primary second other err before_mode rc
+  local rec primary second other err before_mode rc primary_captain_target
   rec=$(new_home_pair unsafe)
   primary=${rec%%|*}
   second=${rec#*|}
+  primary_captain_target="$second/data/captain.md"
 
   ln -s "$primary/data/captain.md" "$primary/data/captain-shared.md"
   err="$TMP_ROOT/unsafe-source.err"
@@ -178,6 +179,22 @@ test_unsafe_artifacts_and_failure_restore_readonly_mode() {
   propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>"$err"; rc=$?
   [ "$rc" -ne 0 ] || fail "symlinked destination should be rejected"
   assert_grep "unsafe destination" "$err" "unsafe destination symlink error should be explicit"
+  [ -L "$second/data/captain-shared.md" ] || fail "rejecting a live destination link unlinked it"
+  [ "$(readlink "$second/data/captain-shared.md")" = "$primary_captain_target" ] \
+    || fail "rejecting a live destination link repointed it"
+  rm -f "$second/data/captain-shared.md"
+
+  # A dangling destination link guards nothing, so it must be cleared and the
+  # shared file must converge rather than stay permanently unconvergeable.
+  ln -s "$TMP_ROOT/shared-missing-target" "$second/data/captain-shared.md"
+  err="$TMP_ROOT/dangling-dest-symlink.err"
+  propagate_secondmate_inheritance "$primary" "$second" >/dev/null 2>"$err"; rc=$?
+  [ "$rc" -eq 0 ] || fail "dangling destination link should not stop shared-preference convergence"
+  [ -L "$second/data/captain-shared.md" ] && fail "dangling destination link was not cleared"
+  assert_grep "safe source" "$second/data/captain-shared.md" \
+    "converging over a dangling destination link lost the primary bytes"
+  [ ! -e "$TMP_ROOT/shared-missing-target" ] \
+    || fail "clearing a dangling destination link created its target"
   rm -f "$second/data/captain-shared.md"
 
   write_shared "$second/data/captain-shared.md" "hardlinked local drift"

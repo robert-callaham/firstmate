@@ -114,7 +114,8 @@ Both halves stop at an operator's symlink: for every declared item, a destinatio
 Such an item reports a concrete error and leaves the link exactly as it found it; removing the link is the operator's own action and restores convergence on the next run.
 A dangling destination link is not protected, since it guards nothing: it is replaced or removed like any other stale artifact so the item never becomes permanently unconvergeable.
 That applies only on positive confirmation that the link's target is absent, which requires the target's own parent directory to be present and searchable; a link into an unmounted volume, a locked encrypted mount, or an unreadable directory is indeterminate, not dangling, and is preserved with its own distinct diagnostic rather than destroyed.
-The local and remote receivers apply the same classification, so this contract holds on both paths.
+The local and remote receivers reach the same three outcomes for every inherited item, including `data/captain-shared.md`, so this contract holds on both paths and for the whole declared set.
+The shared-preference file reports its two preserved cases under its own single unsafe-destination diagnostic rather than distinguishing live from unexaminable, and its dangling link is cleared rather than quarantined, since a link to nothing has no local bytes worth preserving.
 Explicit per-spawn `--backend` and `FM_BACKEND` remain stronger than every home's local `config/backend`, including an inherited default.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
 `data/captain-shared.md` is main-authoritative in the primary home and read-only in secondmate homes.

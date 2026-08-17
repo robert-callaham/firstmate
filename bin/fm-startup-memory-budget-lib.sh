@@ -29,27 +29,42 @@ fm_startup_memory_budget_link_count() {
   fi
 }
 
-# fm_startup_memory_budget_resolve <path>
-# Prints <path> with every symlink resolved, so the safety checks below apply
-# to the real target rather than to the link.  A symlink is a legitimate local
-# layout (an operator may keep private config in a separate tree and link it
-# into the home); the property worth enforcing is that whatever the name finally
-# names is an ordinary, single-linked, well-formed artifact.  Fails on a broken
-# or cyclic chain.  BSD and GNU userlands disagree about `realpath` and
-# `readlink -f`, so the chain is walked here instead of shelling out to either.
-fm_startup_memory_budget_resolve() {
-  local path=$1 depth=0 target parent base
+FM_SYMLINK_CHAIN_MAX_HOPS=40
+
+# fm_symlink_chain_final <path>
+# Prints the path the symlink chain finally names, whether or not that name
+# exists.  Fails on a cycle, a hop-cap overflow, or an unreadable link.  BSD and
+# GNU userlands disagree about `realpath` and `readlink -f`, so the chain is
+# walked here instead of shelling out to either.  This is the one owner of that
+# walk: callers add their own tail, one resolving the parent physically and
+# another stating the target's parent to classify liveness, so a fix to the hop
+# cap or to readlink handling lands in a single place.
+fm_symlink_chain_final() {
+  local path=$1 depth=0 target
   while [ -L "$path" ]; do
-    if [ "$depth" -ge 40 ]; then
+    if [ "$depth" -ge "$FM_SYMLINK_CHAIN_MAX_HOPS" ]; then
       return 1
     fi
-    target=$(readlink "$path") || return 1
+    target=$(readlink "$path" 2>/dev/null) || return 1
     case "$target" in
       /*) path=$target ;;
       *) path="$(dirname -- "$path")/$target" ;;
     esac
     depth=$((depth + 1))
   done
+  printf '%s\n' "$path"
+}
+
+# fm_startup_memory_budget_resolve <path>
+# Prints <path> with every symlink resolved, so the safety checks below apply
+# to the real target rather than to the link.  A symlink is a legitimate local
+# layout (an operator may keep private config in a separate tree and link it
+# into the home); the property worth enforcing is that whatever the name finally
+# names is an ordinary, single-linked, well-formed artifact.  Fails on a broken
+# or cyclic chain.
+fm_startup_memory_budget_resolve() {
+  local path parent base
+  path=$(fm_symlink_chain_final "$1") || return 1
   parent=$(dirname -- "$path")
   base=$(basename -- "$path")
   parent=$(CDPATH='' cd -P -- "$parent" 2>/dev/null && pwd -P) || return 1

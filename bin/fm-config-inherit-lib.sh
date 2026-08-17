@@ -139,16 +139,8 @@ fm_inherit_sha256() {
 # callers treat as live, because a preserved stale link costs one diagnostic
 # while a destroyed live link costs the operator's private tree.
 fm_inherit_dest_link_state() {
-  local path=$1 depth=0 target parent
-  while [ -L "$path" ]; do
-    [ "$depth" -lt 40 ] || { printf 'unknown\n'; return 0; }
-    target=$(readlink "$path" 2>/dev/null) || { printf 'unknown\n'; return 0; }
-    case "$target" in
-      /*) path=$target ;;
-      *) path="$(dirname -- "$path")/$target" ;;
-    esac
-    depth=$((depth + 1))
-  done
+  local path parent
+  path=$(fm_symlink_chain_final "$1") || { printf 'unknown\n'; return 0; }
   if [ -e "$path" ]; then
     printf 'live\n'
     return 0
@@ -370,6 +362,25 @@ propagate_shared_captain_preferences() {
   dest_home=${dest_data%/data}
   rc=0
 
+  # Give this file the same three-way OUTCOME as the config allowlist, so one
+  # stated inheritance contract covers every inherited item rather than holding
+  # for six of them. Only the dangling case needs intercepting here: a live or
+  # unexaminable link already falls through to shared_captain_file_safe_existing
+  # below, which refuses it as an unsafe destination and leaves it untouched,
+  # which is the preserve-the-operator's-link outcome. A confirmed dangling link
+  # guards nothing and quarantining it would preserve no bytes, so it is cleared
+  # and the checks below then see an ordinary absent destination. Without this
+  # the shared file alone would stay permanently unconvergeable behind a
+  # leftover link, the failure mode the contract rules out everywhere else.
+  if [ -L "$dest" ] && [ "$(fm_inherit_dest_link_state "$dest")" = dangling ]; then
+    if ! rm -f "$dest" 2>/dev/null; then
+      reason="failed to remove dangling symlinked destination"
+      warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$dest" "$reason"
+      record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
+      return 1
+    fi
+  fi
+
   if [ -e "$src" ] || [ -L "$src" ]; then
     if ! shared_captain_file_safe_existing "$src"; then
       reason="unsafe primary source"
@@ -378,7 +389,7 @@ propagate_shared_captain_preferences() {
       return 1
     fi
     if ! shared_captain_header_valid "$src"; then
-      reason="primary source header missing required main-authoritative warning"
+      reason="missing the required main-authoritative header warning in primary source"
       warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$src" "$reason"
       record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
       return 1
@@ -408,7 +419,7 @@ propagate_shared_captain_preferences() {
           record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" unchanged ""
           return 0
         fi
-        reason="failed to restore read-only mode"
+        reason="failed to restore read-only mode on destination"
         warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$dest" "$reason"
         record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
         return 1
@@ -464,7 +475,7 @@ propagate_shared_captain_preferences() {
       printf 'SECONDMATE_SYNC: secondmate home %s: quarantined %s drift at %s\n' "$dest_home" "$FM_SHARED_CAPTAIN_REL" "$quarantine"
       record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" pushed "mirrored primary absence after quarantining local copy at $quarantine"
     else
-      reason="failed to quarantine destination before mirroring primary absence"
+      reason="failed to quarantine the absence-mirrored destination"
       warn_inheritable_config_error "$FM_SHARED_CAPTAIN_REL" "$dest" "$reason"
       record_inheritable_config_result "$FM_SHARED_CAPTAIN_REL" error "$reason"
       restore_shared_captain_readonly "$dest" || true
@@ -524,7 +535,7 @@ propagate_inheritable_config() {
       link_state=$(fm_inherit_dest_link_state "$dest")
       if [ "$link_state" != dangling ]; then
         if [ "$link_state" = unknown ]; then
-          reason="preserved symlinked destination whose target could not be examined"
+          reason="preserved unexaminable symlinked destination"
         else
           reason="refused to replace or remove symlinked destination"
         fi
