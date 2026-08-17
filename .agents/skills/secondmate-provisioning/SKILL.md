@@ -110,6 +110,9 @@ Propagation failures warn without blocking secondmate launch or session-start co
 Inheritance copies the literal `config/crew-harness` file, so a secondmate's own crewmates use the primary's crewmate harness only when it names a concrete adapter such as `codex`; an unset or `default` value has nothing concrete to inherit, and the secondmate's own crewmates fall back to the secondmate's own or detected harness instead.
 Inherited `config/backend` becomes that secondmate home's local runtime-backend default for future spawns only; it never retargets, rewrites, migrates, stops, or restarts an already-live worker endpoint.
 A present primary value always converges byte-exact into validated secondmate homes, and primary absence removes the destination so those homes keep runtime auto-detection.
+Both halves stop at an operator's symlink: for every declared item, a destination that is a symlink whose target resolves is never replaced, never written through, and never unlinked to mirror absence, because that link belongs to the operator and may point into a private tree kept outside the home.
+Such an item reports a concrete error and leaves the link exactly as it found it; removing the link is the operator's own action and restores convergence on the next run.
+A dangling destination link is not protected, since it guards nothing: it is replaced or removed like any other stale artifact so the item never becomes permanently unconvergeable.
 Explicit per-spawn `--backend` and `FM_BACKEND` remain stronger than every home's local `config/backend`, including an inherited default.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
 `data/captain-shared.md` is main-authoritative in the primary home and read-only in secondmate homes.

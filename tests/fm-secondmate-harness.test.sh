@@ -316,18 +316,44 @@ test_propagate_lib() {
   printf 'pi\n' > "$src/crew-harness"
   stderr="$d/symlinked-dest.err"
   if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
-    fail "a symlinked destination did not stop propagation"
+    fail "a live symlinked destination did not stop propagation"
   fi
   assert_contains "$(cat "$stderr")" \
     "fm-config-inherit: error: refused to replace or remove symlinked destination crew-harness" \
-    "symlinked destination did not emit a stderr diagnostic"
-  [ -L "$dest/crew-harness" ] || fail "propagation unlinked a symlinked destination"
-  [ "$(readlink "$dest/crew-harness")" = "$outside" ] || fail "propagation repointed a symlinked destination"
-  [ "$(cat "$outside")" = outside ] || fail "propagation wrote through a symlinked destination"
-  [ "$(cat "$src/crew-harness")" = pi ] || fail "refusing a symlinked destination changed the primary source"
+    "live symlinked destination did not emit a stderr diagnostic"
+  [ -L "$dest/crew-harness" ] || fail "propagation unlinked a live symlinked destination"
+  [ "$(readlink "$dest/crew-harness")" = "$outside" ] || fail "propagation repointed a live symlinked destination"
+  [ "$(cat "$outside")" = outside ] || fail "propagation wrote through a live symlinked destination"
+  [ "$(cat "$src/crew-harness")" = pi ] || fail "refusing a live symlinked destination changed the primary source"
   rm -f "$dest/crew-harness"
   propagate_inheritable_config "$src" "$dest"
   [ "$(cat "$dest/crew-harness")" = pi ] || fail "removing the destination link did not restore convergence"
+
+  # A dangling destination link protects nothing and must be replaced, not
+  # refused, so the item stays convergeable.
+  rm -f "$dest/crew-harness"
+  ln -s "$d/copy-missing-target" "$dest/crew-harness"
+  propagate_inheritable_config "$src" "$dest" \
+    || fail "a dangling destination symlink stopped propagation"
+  [ -L "$dest/crew-harness" ] && fail "dangling destination symlink not replaced on the copy path"
+  [ "$(cat "$dest/crew-harness")" = pi ] || fail "replacing a dangling destination link lost the primary bytes"
+  [ ! -e "$d/copy-missing-target" ] || fail "replacing a dangling destination link created its target"
+
+  # The write helper enforces the same invariant locally, so a second caller or
+  # a reordering cannot reintroduce the unlink.
+  rm -f "$dest/crew-harness"
+  ln -s "$outside" "$dest/crew-harness"
+  if copy_inheritable_file "$src/crew-harness" "$dest/crew-harness"; then
+    fail "copy_inheritable_file wrote over a live symlinked destination"
+  fi
+  [ -L "$dest/crew-harness" ] || fail "copy_inheritable_file unlinked a live symlinked destination"
+  [ "$(cat "$outside")" = outside ] || fail "copy_inheritable_file wrote through a live symlinked destination"
+  rm -f "$dest/crew-harness"
+  ln -s "$d/helper-missing-target" "$dest/crew-harness"
+  copy_inheritable_file "$src/crew-harness" "$dest/crew-harness" \
+    || fail "copy_inheritable_file refused a dangling destination link"
+  [ -L "$dest/crew-harness" ] && fail "copy_inheritable_file did not replace a dangling destination link"
+  [ "$(cat "$dest/crew-harness")" = pi ] || fail "copy_inheritable_file lost the source bytes"
 
   # 4. removing the source mirrors absence downstream (primary-authoritative)
   printf 'herdr\n' > "$dest/backend"
@@ -343,16 +369,25 @@ test_propagate_lib() {
 
   rm -f "$dest/crew-harness"
   ln -s "$d/missing-target" "$dest/crew-harness"
-  stderr="$d/absence-symlink.err"
+  propagate_inheritable_config "$src" "$dest"
+  [ -L "$dest/crew-harness" ] && fail "broken destination symlink not removed on absence mirror"
+
+  # A LIVE destination link is the opposite case: the absence mirror must leave
+  # it and its target alone rather than unlinking an operator's private tree.
+  rm -f "$dest/crew-harness"
+  printf 'outside\n' > "$outside"
+  ln -s "$outside" "$dest/crew-harness"
+  stderr="$d/absence-live-symlink.err"
   if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
-    fail "a symlinked destination did not stop the absence mirror"
+    fail "a live symlinked destination did not stop the absence mirror"
   fi
   assert_contains "$(cat "$stderr")" \
     "fm-config-inherit: error: refused to replace or remove symlinked destination crew-harness" \
-    "symlinked destination on the absence mirror did not emit a stderr diagnostic"
-  [ -L "$dest/crew-harness" ] || fail "absence mirror unlinked a symlinked destination"
-  [ "$(readlink "$dest/crew-harness")" = "$d/missing-target" ] \
-    || fail "absence mirror repointed a symlinked destination"
+    "live symlinked destination on the absence mirror did not emit a stderr diagnostic"
+  [ -L "$dest/crew-harness" ] || fail "absence mirror unlinked a live symlinked destination"
+  [ "$(readlink "$dest/crew-harness")" = "$outside" ] \
+    || fail "absence mirror repointed a live symlinked destination"
+  [ "$(cat "$outside")" = outside ] || fail "absence mirror changed a live symlink target"
 
   rm -f "$dest/crew-harness"
   mkdir -p "$dest/crew-harness"

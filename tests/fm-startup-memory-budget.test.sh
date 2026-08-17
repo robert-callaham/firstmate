@@ -377,6 +377,20 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
   [ "$(<"$sm/config/startup-memory-budget")" = 321 ] \
     || fail "removing the destination link did not restore the converged primary budget"
 
+  # A dangling destination link guards nothing, so it must be replaced rather
+  # than validated into a permanently unconvergeable item.
+  rm -f "$sm/config/startup-memory-budget"
+  ln -s "$world/budget-missing-target" "$sm/config/startup-memory-budget"
+  out=$(run_config_push "$root" "$home" "$fakebin" "$log")
+  assert_contains "$out" 'startup-memory-budget: pushed' \
+    "a dangling destination link did not converge"
+  [ -L "$sm/config/startup-memory-budget" ] \
+    && fail "a dangling destination link was not replaced by the converged file"
+  [ "$(<"$sm/config/startup-memory-budget")" = 321 ] \
+    || fail "replacing a dangling destination link lost the primary budget bytes"
+  [ ! -e "$world/budget-missing-target" ] \
+    || fail "replacing a dangling destination link created its target"
+
   # A symlinked destination config/ never converges, by either of two separate
   # guards, and neither one disturbs the operator's link.
   linked_config="$sm/private-config"

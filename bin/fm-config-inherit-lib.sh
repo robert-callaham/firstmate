@@ -127,9 +127,17 @@ fm_inherit_sha256() {
   fi
 }
 
+# Never write over a live operator symlink. propagate_inheritable_config
+# refuses one before calling here; this restates the invariant at the point of
+# the write so a second caller or a reordering cannot silently reintroduce the
+# data-loss path. A link whose target does not resolve protects nothing and is
+# replaced below like any other stale destination artifact.
 copy_inheritable_file() {
   local src=$1 dest=$2 dest_parent tmp
-  if [ -e "$dest" ] && [ ! -f "$dest" ] && [ ! -L "$dest" ]; then
+  if [ -L "$dest" ] && [ -e "$dest" ]; then
+    return 1
+  fi
+  if [ -e "$dest" ] && [ ! -f "$dest" ]; then
     return 1
   fi
   dest_parent=${dest%/*}
@@ -166,6 +174,12 @@ destination_allows_inherited_item() {
     "$top"/*) rel_path=${dest_path#"$top"/} ;;
     *) return 1 ;;
   esac
+  # Depends on git refusing a pathspec that traverses a symlink: when dest_name
+  # is itself a link, git never evaluates the ignore patterns and exits non-zero
+  # with "pathspec ... is beyond a symbolic link", which the redirect swallows
+  # and this reads as "not ignored". That is the mechanism by which a symlinked
+  # destination config directory is skipped rather than written through. If a
+  # future git resolves such a pathspec instead, that skip disappears.
   git -C "$top" check-ignore -q -- "$rel_path" 2>/dev/null
 }
 
@@ -455,14 +469,20 @@ propagate_inheritable_config() {
     src="$src_config/$item"
     dest="$dest_config/$item"
     # An operator may link an individual item into a private tree kept outside
-    # this home. That link is theirs, not ours: propagation neither replaces it
-    # with a regular file nor writes through it to bytes the primary does not
-    # own, and the absence mirror below never unlinks it either. Refusing loudly
-    # keeps the link intact and states a concrete reason on every convergence,
-    # where silently unlinking it would disconnect that tree with nothing to
-    # notice it by. No item is exempt: this holds for the whole declared set,
-    # including the one below with its own additional validation.
-    if [ -L "$dest" ]; then
+    # this home. A link whose target resolves is theirs, not ours: propagation
+    # neither replaces it with a regular file nor writes through it to bytes the
+    # primary does not own, and the absence mirror below never unlinks it
+    # either. Refusing loudly keeps the link intact and states a concrete reason
+    # on every convergence, where silently unlinking it would disconnect that
+    # tree with nothing to notice it by. No item is exempt: this holds for the
+    # whole declared set, including the one below with its own validation.
+    #
+    # A DANGLING link is the opposite case and is deliberately not protected. It
+    # guards no tree, so refusing it would only make the item permanently
+    # unconvergeable and fail every convergence until someone removed it by
+    # hand. It falls through to the ordinary copy and absence-mirror handling
+    # below, which replaces or removes it exactly as any other stale artifact.
+    if [ -L "$dest" ] && [ -e "$dest" ]; then
       reason="refused to replace or remove symlinked destination"
       warn_inheritable_config_error "$item" "$dest" "$reason"
       record_inheritable_config_result "$item" error "$reason"
@@ -500,7 +520,10 @@ propagate_inheritable_config() {
           continue
         fi
       fi
-      if [ -e "$dest" ] || [ -L "$dest" ]; then
+      # A dangling destination link is excluded here for the reason given at the
+      # guard above: it is cleaned up below rather than validated into a
+      # permanent error.
+      if [ -e "$dest" ]; then
         if ! fm_startup_memory_budget_file_valid "$dest"; then
           reason="unsafe or invalid destination: $FM_STARTUP_MEMORY_BUDGET_ERROR"
           warn_inheritable_config_error "$item" "$dest" "$reason"
